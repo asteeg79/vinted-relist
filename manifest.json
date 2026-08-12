@@ -1,0 +1,95 @@
+{
+  "manifest_version": 3,
+  "name": "Vinted Relist",
+  "version": "0.46.0",
+  "description": "Delete and repost a Vinted listing from its URL to bump it to the top of search.",
+  "permissions": [
+    "storage",
+    "scripting",
+    "activeTab",
+    "tabs",
+    "cookies",
+    "webRequest"
+  ],
+  "host_permissions": [
+    "https://*.vinted.com/*",
+    "https://*.vinted.fr/*",
+    "https://*.vinted.de/*",
+    "https://*.vinted.it/*",
+    "https://*.vinted.es/*",
+    "https://*.vinted.nl/*",
+    "https://*.vinted.be/*",
+    "https://*.vinted.co.uk/*",
+    "https://*.vinted.pl/*",
+    "https://*.vinted.at/*",
+    "https://*.vinted.cz/*",
+    "https://*.vinted.sk/*",
+    "https://*.vinted.lt/*",
+    "https://*.vinted.lu/*",
+    "https://*.vinted.pt/*",
+    "https://*.vinted.ro/*",
+    "https://*.vinted.se/*",
+    "https://*.vinted.hu/*",
+    "https://*.vinted.dk/*",
+    "https://*.vinted.fi/*",
+    "https://*.vinted.net/*",
+    "https://*.vinted-mtn.com/*",
+    "https://*.vinted-photos.com/*",
+    "https://images1.vinted.net/*",
+    "https://images.vinted.net/*",
+    "https://*.akamaized.net/*",
+    "https://marketplace-web-assets.vinted.com/*"
+  ],
+  "background": {
+    "service_worker": "background/service-worker.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "icons/16.png",
+      "48": "icons/48.png",
+      "128": "icons/128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/16.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*.vinted.com/*",
+        "https://*.vinted.fr/*",
+        "https://*.vinted.de/*",
+        "https://*.vinted.it/*",
+        "https://*.vinted.es/*",
+        "https://*.vinted.nl/*",
+        "https://*.vinted.be/*",
+        "https://*.vinted.co.uk/*",
+        "https://*.vinted.pl/*",
+        "https://*.vinted.at/*",
+        "https://*.vinted.cz/*",
+        "https://*.vinted.sk/*",
+        "https://*.vinted.lt/*",
+        "https://*.vinted.lu/*",
+        "https://*.vinted.pt/*",
+        "https://*.vinted.ro/*",
+        "https://*.vinted.se/*",
+        "https://*.vinted.hu/*",
+        "https://*.vinted.dk/*",
+        "https://*.vinted.fi/*"
+      ],
+      "js": [
+        "content/page-call.js",
+        "content/card-policy.js",
+        "content/content.js"
+      ],
+      "css": [
+        "content/inject.css"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

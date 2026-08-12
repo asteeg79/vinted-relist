@@ -1,0 +1,14 @@
+# macOS
+.DS_Store
+
+# Node (the project has no dependencies, but npm may still create these)
+node_modules/
+package-lock.json
+npm-debug.log*
+
+# Local-only editor / tool config
+.claude/settings.local.json
+.vscode/
+
+# Coverage output
+coverage/

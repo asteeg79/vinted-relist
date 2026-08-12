@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="popup.css">
+  <title>Vinted Relist</title>
+</head>
+<body>
+  <!-- Main view -->
+  <section id="viewMain">
+    <header class="header">
+      <div class="brand">
+        <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M3 4l8 16 4-9 6-7H3z" fill="currentColor"/>
+        </svg>
+        <div class="brand-text">
+          <h1>Vinted Relist</h1>
+          <p class="subtitle">Artikel an die Spitze bringen</p>
+        </div>
+        <button id="openSettings" class="icon-btn" title="Einstellungen" aria-label="Einstellungen">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <main class="main">
+      <div class="field">
+        <label for="url">Artikel-URL</label>
+        <input id="url" type="url" placeholder="https://www.vinted.de/items/…" autocomplete="off" spellcheck="false">
+      </div>
+
+      <button id="go" class="btn-primary">
+        <span class="btn-label">Löschen &amp; neu einstellen</span>
+        <span class="spinner" aria-hidden="true"></span>
+      </button>
+
+      <div class="counter-row">
+        <span class="counter-label">Letzte Stunde</span>
+        <span id="countHour" class="counter-value">0</span>
+        <span class="counter-sep">·</span>
+        <span class="counter-label">24 h</span>
+        <span id="count24h" class="counter-value">0</span>
+      </div>
+
+      <!-- One box renders every gate; the copy comes from lib/gates.js. -->
+      <div id="gateBox" class="warn-box" hidden>
+        <strong id="gateTitle"></strong>
+        <p id="gateText" class="confirm-text"></p>
+        <ul id="gateLines" class="interest-list"></ul>
+        <p id="gateNote" class="confirm-text"></p>
+        <div class="confirm-actions" style="margin-top:8px">
+          <button id="gateCancel" class="btn-secondary">Abbrechen</button>
+          <button id="gateProceed" class="btn-primary-sm">Fortfahren</button>
+        </div>
+      </div>
+
+      <div id="progress" class="progress" hidden>
+        <div class="progress-row">
+          <span id="progressStep" class="progress-step">…</span>
+          <span id="progressPct" class="progress-pct">0%</span>
+        </div>
+        <div class="progress-track">
+          <div id="progressFill" class="progress-fill"></div>
+        </div>
+      </div>
+
+      <div id="status" class="status" role="status" aria-live="polite"></div>
+
+      <details class="log">
+        <summary>
+          <span>Log</span>
+          <svg class="chev" viewBox="0 0 20 20" aria-hidden="true"><path d="M6 8l4 4 4-4" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </summary>
+        <pre id="log-output"></pre>
+        <div class="log-actions">
+          <button id="copyLog" class="btn-link">Log & Fehler kopieren</button>
+          <button id="clearLog" class="btn-link">Log leeren</button>
+        </div>
+      </details>
+
+      <details class="log">
+        <summary>
+          <span>Verlauf</span>
+          <svg class="chev" viewBox="0 0 20 20" aria-hidden="true"><path d="M6 8l4 4 4-4" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </summary>
+        <ul id="historyList" class="history-list"></ul>
+        <button id="clearHistory" class="btn-link">Verlauf löschen</button>
+      </details>
+    </main>
+
+    <footer class="footer">
+      Nutzt deine bestehende Vinted-Session. Keine Daten verlassen den Browser.
+    </footer>
+  </section>
+
+  <!-- Settings view -->
+  <section id="viewSettings" hidden>
+    <header class="header settings-header">
+      <button id="closeSettings" class="icon-btn" aria-label="Zurück">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <h1>Einstellungen</h1>
+    </header>
+
+    <main class="main">
+      <div class="setting-row">
+        <label class="setting-label" for="setDelete">
+          <span>Original nach Klon löschen</span>
+          <span class="setting-hint">Wenn aus: Test-Modus, Original bleibt erhalten.</span>
+        </label>
+        <input id="setDelete" type="checkbox" class="toggle">
+      </div>
+
+      <div class="setting-row">
+        <label class="setting-label" for="setInterest">
+          <span>Vor Relist warnen bei Likes/Views</span>
+          <span class="setting-hint">Fragt vor dem Löschen ob du wirklich willst.</span>
+        </label>
+        <input id="setInterest" type="checkbox" class="toggle">
+      </div>
+
+      <div class="setting-row">
+        <label class="setting-label" for="setVerify">
+          <span>Klon vor Löschen verifizieren</span>
+          <span class="setting-hint">Holt das neue Listing noch mal ab — Schutz vor Phantom-Erstellungen.</span>
+        </label>
+        <input id="setVerify" type="checkbox" class="toggle">
+      </div>
+
+      <div class="setting-row stacked">
+        <label class="setting-label" for="setQuality">
+          <span>Foto-Qualität: <span id="qualityValue">92</span>%</span>
+          <span class="setting-hint">Höher = größere Datei, näher am Original.</span>
+        </label>
+        <input id="setQuality" type="range" min="60" max="98" step="1">
+      </div>
+
+      <div class="setting-row stacked">
+        <label class="setting-label" for="setWarnHour">
+          <span>Warnen ab <input id="setWarnHour" type="number" min="1" max="50" class="inline-input"> Relists / Stunde</span>
+        </label>
+      </div>
+
+      <div class="setting-row stacked">
+        <label class="setting-label" for="setWarn24h">
+          <span>Warnen ab <input id="setWarn24h" type="number" min="1" max="500" class="inline-input"> Relists / 24 h</span>
+        </label>
+      </div>
+
+      <button id="resetConfirm" class="btn-link" style="margin-top: 12px;">Erst-Bestätigung zurücksetzen</button>
+    </main>
+
+    <footer class="footer settings-footer">
+      <span id="saveHint">Änderungen werden automatisch gespeichert.</span>
+    </footer>
+  </section>
+
+  <!-- module, so the popup can import lib/* instead of mirroring it -->
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

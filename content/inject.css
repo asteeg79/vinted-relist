@@ -1,0 +1,224 @@
+/* Vinted Relist injected UI — all class names are prefixed to avoid collisions. */
+
+.vr-bump-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 4px 4px 0 0;
+  padding: 4px 10px;
+  background: #fff;
+  color: #09b1ba;
+  border: 1px solid #09b1ba;
+  border-radius: 6px;
+  font: 600 12px / 1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, opacity 0.15s;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.vr-bump-btn:hover:not(:disabled) {
+  background: #09b1ba;
+  color: #fff;
+}
+
+.vr-bump-btn:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+
+.vr-bump-btn-icon {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+}
+
+.vr-bump-btn.is-loading .vr-bump-btn-icon {
+  animation: vr-spin 0.8s linear infinite;
+}
+
+@keyframes vr-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ---------- Toast (progress + result) ---------- */
+.vr-toast {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 2147483646;
+  width: 300px;
+  padding: 14px 16px;
+  background: #fff;
+  color: #14181b;
+  border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(20, 24, 27, 0.16), 0 1px 3px rgba(20, 24, 27, 0.08);
+  font: 13px / 1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+  transition: opacity 0.3s, transform 0.3s;
+}
+
+.vr-toast.hide { opacity: 0; transform: translateY(8px); }
+
+.vr-toast-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-size: 11.5px;
+  color: #4a5258;
+}
+
+.vr-toast-title {
+  font-weight: 600;
+  color: #14181b;
+}
+
+.vr-toast-close {
+  background: none;
+  border: 0;
+  color: #8a9197;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 4px;
+  cursor: pointer;
+}
+
+.vr-toast-step {
+  display: block;
+  color: #4a5258;
+  font-size: 11.5px;
+  font-weight: 500;
+  margin-bottom: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vr-toast-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 6px;
+}
+
+.vr-toast-pct {
+  font-size: 11px;
+  font-weight: 600;
+  color: #8a9197;
+  font-variant-numeric: tabular-nums;
+}
+
+.vr-toast-track {
+  height: 6px;
+  background: #e6e8ea;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.vr-toast-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #09b1ba, #1ad0d8);
+  transition: width 0.3s ease;
+}
+
+.vr-toast-result {
+  margin-top: 0;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.vr-toast-result.ok { color: #1d6b3a; }
+.vr-toast-result.warning { color: #7a5500; }
+.vr-toast-result.error { color: #8a1b1b; }
+
+.vr-toast-link {
+  display: inline-block;
+  margin-top: 6px;
+  color: #09b1ba;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* ---------- Modal dialog ---------- */
+.vr-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(20, 24, 27, 0.45);
+  z-index: 2147483647;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: vr-fade-in 0.15s ease;
+}
+
+@keyframes vr-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.vr-dialog {
+  width: 360px;
+  max-width: calc(100vw - 40px);
+  padding: 20px;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 16px 48px rgba(0,0,0,0.25);
+  font: 13px / 1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+  color: #14181b;
+}
+
+.vr-dialog h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.vr-dialog p {
+  margin: 0 0 14px;
+  color: #4a5258;
+  white-space: pre-wrap;
+}
+
+.vr-dialog ul {
+  margin: 6px 0 14px 0;
+  padding-left: 18px;
+  color: #4a5258;
+}
+
+.vr-dialog-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.vr-btn {
+  padding: 7px 14px;
+  border-radius: 6px;
+  font: 600 12px / 1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+  cursor: pointer;
+  border: 0;
+}
+
+.vr-btn-cancel {
+  background: #fff;
+  color: #4a5258;
+  border: 1px solid #d0d3d5;
+}
+
+.vr-btn-cancel:hover { background: #f7f8f9; }
+
+.vr-btn-confirm {
+  background: #09b1ba;
+  color: #fff;
+}
+
+.vr-btn-confirm:hover { background: #07959d; }
+
+/* Item card visual when relisted */
+[data-vr-relisted] {
+  opacity: 0.45;
+  pointer-events: none;
+  transition: opacity 0.4s;
+}
