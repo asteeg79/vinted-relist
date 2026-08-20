@@ -147,8 +147,39 @@ manifest-deklariertes Content-Script keine ES-Module importieren kann.
 | `confirmation.js` | Das „schon einmal bestätigt"-Flag |
 | `progress.js` | `{pct, label}` in Storage; beide UIs abonnieren via `onChanged` |
 | `logger.js` | 500-Zeilen-Ringpuffer — die Grundlage jeder Fehlersuche |
-| `util.js` | `sleep`, `jitter`, `uuidV4`, `arrayBufferToBase64` |
+| `util.js` | `sleep`, `jitter`, `uuidV4`, `arrayBufferToBase64`, `base64ToBytes` |
 | `domains.js` | Die 20 Vinted-Länderdomains, Match-Patterns |
+
+**`lib/` — Auto-Listing (zweite Pipeline, ADR-0007)**
+
+| Datei | Aufgabe |
+|---|---|
+| `crop.js` | **Pur.** Objektbox, Rahmenwahl, Padding, Pad-Farbe — das Objekt wird nie angeschnitten |
+| `title.js` | **Pur.** Titelbau je Profil, Kürzungsreihenfolge, Byte-Limit |
+| `resolve.js` | **Pur.** String → Vinted-ID; das Modell wählt aus der Liste, es erfindet keine ID |
+| `price.js` | **Pur.** Vinteds `midpoint`, Rundung, Untergrenze, Schutz des manuellen Preises |
+| `price-memory.js` | Was du zuletzt für Vergleichbares genommen hast — Hinweis, kein Vorschlag |
+| `draft-view.js` | **Pur.** Render-Modell des Studios: Feldzustände, Blocker, `canPublish` |
+| `ai.js` | Anthropic-Client (Haiku): ein Erkennungs-Call je Artikel, Tool-Use mit JSON-Schema |
+| `secret.js` | API-Key verschlüsselt (PBKDF2 + AES-GCM), Klartext nur in `storage.session` |
+| `taxonomy.js` | Kategorien, Marken, Farben, Größen, Pflichtfelder, Preisspanne — **Transport injiziert** |
+| `vinted-read.js` | Der Lese-Transport aus der Extension-Page (Spike 0b) |
+| `lookup.js` | Die Vorbereitung: Erkennung → IDs → Preis. Lesend, ohne Lock |
+| `draft.js` | Die Veröffentlichungs-Pipeline gegen den `DraftPort` |
+| `draft-port.js` | Deklaration der Naht (`DRAFT_PORT_MEMBERS`, `missingMembers`) |
+| `live-draft-port.js` | Der echte Adapter — reines Verdrahten |
+| `write-lock.js` | „Ein schreibender Vorgang" — geteilt mit `relist()` |
+
+**`studio/` — die vierte Oberfläche (eigener Tab, ES-Modul)**
+
+| Datei | Aufgabe |
+|---|---|
+| `studio.js` | Intake, Review, Kopieren/Herunterladen — **enthält keine Entscheidung** |
+| `canvas.js` | Canvas-Adapter: EXIF aufrichten, zuschneiden bzw. padden, JPEG q=0.9 |
+
+`studio/*` ist die einzige Zone neben `content/`, die bewusst nicht unit-getestet wird —
+deshalb liegt jede Entscheidung in `draft-view.js`. Nach jeder UI-Änderung einmal im
+Trockenlauf durchklicken.
 
 **`content/` — Seiten-Seite (klassische Skripte, Reihenfolge zählt)**
 
@@ -219,6 +250,8 @@ Knopf „Log & Fehler kopieren" im Popup liefert Version + URL + Status + Log.
 | [`DEBUG.md`](DEBUG.md) | DevTools-Rezepte |
 | [`docs/TECHNISCHE_DOKUMENTATION.md`](docs/TECHNISCHE_DOKUMENTATION.md) | Ausführliche technische Doku |
 | [`docs/ABLAUFDIAGRAMM.md`](docs/ABLAUFDIAGRAMM.md) | Ablaufdiagramme |
+| [`docs/KONZEPT_AUTO_LISTING.md`](docs/KONZEPT_AUTO_LISTING.md) | Auto-Listing: Konzept der zweiten Pipeline (Draft, Studio, Stufenmodell) |
+| [`docs/IMPLEMENTIERUNGSPLAN_AUTO_LISTING.md`](docs/IMPLEMENTIERUNGSPLAN_AUTO_LISTING.md) | Auto-Listing: Umsetzung Schritt für Schritt |
 
 Die ADRs haben jeweils einen Abschnitt **„Do not re-suggest"** — sie existieren, damit
 Entscheidungen mit Grund nicht immer wieder aufgerollt werden:
@@ -231,6 +264,7 @@ Entscheidungen mit Grund nicht immer wieder aufgerollt werden:
 | [0004](docs/adr/0004-tolerate-vinted-field-renames.md) | Alias-Helfer + Shape-Logging für Vinteds Feld-Umbenennungen |
 | [0005](docs/adr/0005-never-guess-condition-or-size.md) | Farbe wird gedefaultet, Zustand und Größe **nie** |
 | [0006](docs/adr/0006-content-scripts-are-classic-scripts.md) | Content-Scripts teilen Globals, kein Bundler |
+| [0007](docs/adr/0007-auto-listing-second-pipeline.md) | Auto-Listing als zweite Pipeline in derselben Extension |
 
 ---
 

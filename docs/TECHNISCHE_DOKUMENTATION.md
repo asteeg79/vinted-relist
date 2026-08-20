@@ -8,6 +8,14 @@ keine gespeicherten Zugangsdaten.
 > Diese Doku ergänzt das [Ablaufdiagramm](./ABLAUFDIAGRAMM.md). Die reverse-engineerten
 > API-Details sind zusätzlich im Projekt-Memory hinterlegt.
 
+> **Zweite Pipeline:** Das Auto-Listing (Artikel aus Fotos erstellen) hat ein eigenes
+> Konzept — [KONZEPT_AUTO_LISTING.md](./KONZEPT_AUTO_LISTING.md), Verortung und Key-Ablage
+> in [ADR-0007](./adr/0007-auto-listing-second-pipeline.md), Umsetzung in
+> [IMPLEMENTIERUNGSPLAN_AUTO_LISTING.md](./IMPLEMENTIERUNGSPLAN_AUTO_LISTING.md). Das
+> Prinzip „kein Backend, keine gespeicherten Zugangsdaten" oben ist dort präzisiert zu
+> „keine gespeicherten **Vinted**-Zugangsdaten, kein Backend im Vinted-Pfad": der eigene
+> Anthropic-Key liegt verschlüsselt im Extension-Storage.
+
 ---
 
 ## 1. Inhaltsverzeichnis
@@ -95,7 +103,7 @@ vinted_extention/
 
 ## 4. Laufzeit-Kontexte und Kommunikation
 
-Drei isolierte JS-Kontexte:
+Vier isolierte JS-Kontexte:
 
 1. **Service Worker** (`background/`): hat Zugriff auf privilegierte APIs
    (`chrome.cookies`, `chrome.webRequest`, `chrome.scripting`, `chrome.tabs`), kann aber
@@ -103,6 +111,11 @@ Drei isolierte JS-Kontexte:
 2. **Content-Script** (`content/`): läuft im Vinted-Tab, kann same-origin fetchen, hat
    aber nur eingeschränkte chrome.* APIs.
 3. **Popup** (`popup/`): die UI, lebt nur solange das Popup offen ist.
+4. **Studio-Page** (`studio/`): eigener Tab für das Auto-Listing (ADR-0007). ES-Modul wie
+   das Popup, importiert `lib/` direkt. Hier laufen Zuschnitt (DOM-Canvas) und die
+   KI-Calls gegen `api.anthropic.com` — die Originalfotos verlassen den Tab nie, und der
+   entschlüsselte API-Key auch nicht. Vinted-Calls laufen unverändert nur über das
+   Content-Script (ADR-0001).
 
 **Message-Protokoll** (`chrome.runtime.onMessage`):
 
@@ -179,6 +192,147 @@ Wichtig:
   Vinted bindet die hochgeladenen Fotos an diese Session.
 - Foto-IDs sind session-gebunden: Foto-IDs des Original-Artikels werden beim Create
   abgelehnt (`error_uploading_photo`); deshalb werden Fotos **immer neu hochgeladen**.
+
+### Endpoints für das Auto-Listing (Spike 0b, Prüfpunkte 1–2 — 2026-08-14)
+
+Mitgeschnitten auf `/items/new`, alles `GET`/`POST` same-origin mit den Headern aus §5.
+Antworten sind gekürzt auf die Felder, die wir brauchen; `code: 0` heißt überall „ok".
+
+| Zweck | Methode | Pfad | Antwort |
+|---|---|---|---|
+| Kategoriebaum, vollständig | `GET` | `/api/v2/item_upload/catalogs` | `{catalogs, code}` — 486 KB, 2910 Knoten, 8 Wurzeln |
+| Kategorie suchen | `GET` | `/api/v2/item_upload/catalogs/search?keyword=…` | `{catalog_ids: […], code}` — **nur IDs**, Namen aus dem Baum |
+| Pflichtfelder je Kategorie | `GET` | `/api/v2/offline_verification/criteria/{catalog_id}` | `{required_field_codes: ["brand","price"], code}` |
+| Attribute je Kategorie | `POST` | `/api/v2/item_upload/attributes` | `{attributes: [{code, value_ids, value, configuration}], code}` |
+| Marken je Kategorie | `GET` | `/api/v2/item_upload/brands?category_id={id}` | `{brands: [{id, title, requires_authenticity_check, is_luxury, is_hvf, has_children}], disable_custom_brands, code}` — 50 beliebte |
+| Farben | `GET` | `/api/v2/item_upload/colors` | `{colors: [{id, title, hex, order, code}], code}` — 29 Stück |
+| **Preisvorschlag** | `GET` | `/api/v2/item_price_suggestions?catalog_id=&brand_id=&status_id=` | siehe unten |
+| Paketgrößen je Kategorie | `GET` | `/shipping-estimation/external/catalogs/{catalog_id}/package_sizes` | `{package_sizes, parcel_measurements, …}` |
+| Paketgröße vorschlagen | `POST` | `/shipping-estimation/external/package_sizes/suggestion` | `{package_size_id}` |
+| Kategorie aus Fotos | `POST` | `/api/v2/item_upload/suggestions/categories` | `{categories: […], prefill_categories: […], legacy_first_category, code}` |
+| Marke/Farbe aus Fotos | `POST` | `/api/v2/item_upload/suggestions/attributes` | `{brands, colors, sizes, isbn, dynamic_attributes, code}` |
+
+Ein Kategorie-Knoten ist `{id, title, restricted_to_status_id, badge, photo, path, catalogs[]}`.
+Blätter haben `catalogs: []`. Der Baum trägt **keine** Größengruppe — die kommt aus
+`POST /api/v2/item_upload/attributes` mit `{attributes:[{code:"category", value:[<id>]}]}`;
+für Kleidung antwortet er mit sechs Deskriptoren (Marke, Größe, Zustand, Farbe, Material,
+Maße). Das ist die Reihenfolge aus §6.2 des Konzepts, von Vinted selbst erzwungen: erst
+Kategorie, dann die dafür gültige Größenmenge.
+
+**Preisvorschlag — der wichtigste Befund.**
+
+```
+GET /api/v2/item_price_suggestions?catalog_id=196&brand_id=53&status_id=2
+{
+  "price_suggestion": {
+    "minimum":  { "amount": "4.0", "currency_code": "EUR" },
+    "maximum":  { "amount": "9.0", "currency_code": "EUR" },
+    "midpoint": { "amount": "6.0", "currency_code": "EUR" },
+    "price":    { "amount": "8.0", "currency_code": "EUR" },
+    "currency": "EUR"
+  },
+  "similar_sold_items_present": true,
+  "code": 0
+}
+```
+
+- **Kein Foto nötig.** Drei Query-Parameter, sonst nichts. Der Vorschlag steht also schon
+  in der Vorbereitung zur Verfügung, nicht erst nach dem Upload — Anforderung A6 fällt
+  damit in Stufe 2 statt Stufe 3.
+- **Alle drei Parameter sind nötig.** Ohne `brand_id` antwortet der Endpoint mit `200`,
+  aber ohne `price_suggestion` und mit `similar_sold_items_present: false`.
+- **`similar_sold_items_present` ist die Ehrlichkeitsangabe**: false heißt, es gibt keine
+  Vergleichsverkäufe. Das ist genau die Bedingung aus §7.4 — keine Spanne, kein
+  automatischer Preis.
+- **Vinted rechnet den Mittelwert selbst**, und zwar nicht arithmetisch: bei 4–9 € nennt
+  es `midpoint: 6.0`, nicht 6.5. Daneben steht ein höheres `price` (8.0). `price.js` sollte
+  Vinteds `midpoint` übernehmen statt selbst zu mitteln — es stammt aus deren Verkaufsdaten.
+- **Der Zustand bewegt die Spanne stark**: derselbe Artikel mit `status_id: 6` statt `2`
+  ergibt 11–23 € statt 4–9 €. Entscheidung W3 (bei Zustandswechsel neu holen) ist damit
+  keine Vorsichtsmaßnahme, sondern notwendig.
+
+**Vinteds eigene Fotoerkennung — Prüfpunkt 1, gemessen mit zwei echten Fotos.**
+
+Der Upload-Flow erkennt den Artikel selbst, und zwar allein aus den Bildern — ohne Titel,
+ohne Beschreibung. Die Kette ist dreistufig:
+
+```
+1. POST /api/v2/photos                      (multipart, wie beim Relist)
+   → { id, high_resolution: { id: "03_00f15_MDsRx…" }, dominant_color, … }
+                                 └── DAS ist die image_id für Schritt 2 und 3,
+                                     nicht die numerische `id`
+
+2. POST /api/v2/item_upload/suggestions/categories
+   { image_metadata: [{ image_id, orientation }], upload_session_id }
+   → { categories: [1807, 1806], prefill_categories: [1807], legacy_first_category: 1807 }
+
+3. POST /api/v2/item_upload/suggestions/attributes
+   { title, description, category_id, image_metadata, upload_session_id, attributes }
+   → { brands: […], colors: […], sizes: […], isbn, dynamic_attributes }
+```
+
+Gemessenes Ergebnis für ein blaues T-Shirt, zwei Fotos:
+
+| Feld | Was Vinted zurückgab |
+|---|---|
+| Kategorie | `1807` Bedruckte T-Shirts, `1806` Einfarbige T-Shirts (Herren › Kleidung › Tops & T-Shirts) |
+| Marke | `787` Ellesse |
+| Farben | `27` Marineblau, `15` Bunt |
+| **Größe** | **leer** |
+| ISBN | null |
+
+**Vinted löst `catalog_id`, `brand_id` und die Farb-IDs selbst auf** — fertige IDs, kein
+String→ID-Mapping nötig. Was es **nicht** liefert, ist die Größe: die steht auf dem
+Etikett und braucht Texterkennung.
+
+Damit verschiebt sich die Arbeitsteilung gegenüber dem Konzept (§6.6 hatte genau das als
+offene Frage markiert):
+
+- **Vinted** erkennt Kategorie, Marke, Farbe — mit ihren eigenen IDs.
+- **Unser Modell** liefert, was Vinted nicht kann: Größe vom Etikett, Titel-Slots,
+  Beschreibung, Fotoreihenfolge, Zuschnitt-Prüfung.
+- `resolve.js` schrumpft entsprechend: die Kandidatenliste zu einer erkannten Kategorie
+  kommt aus dem Baum, aufzulösen ist nur noch die Größe.
+
+Ein Vorbehalt: die Erkennung läuft erst **nach** dem Foto-Upload, ist also schreibend im
+Sinne von §4.5 und nicht Teil der freien Vorbereitung. Für den Preisvorschlag gilt das
+nicht — der braucht nur die drei IDs.
+
+**Marken mit Echtheitsprüfung.** Trägt eine Marke `requires_authenticity_check`, zeigt die
+SPA vor dem Einstellen einen Dialog (`GET /api/v2/items/authenticity_modals`) und verlangt
+Fotos von Logo, Pflegeetikett und aufgenähten Labels. Für das Auto-Listing heißt das: eine
+solche Marke ist kein Grund abzubrechen, aber der Nutzer muss es wissen — sonst wird das
+Inserat später versteckt.
+
+### Lesende Calls aus einer Extension-Page (Spike 0b, Prüfpunkt 3 — 2026-08-14)
+
+**Befund: Lesen geht direkt.** Ein `GET` aus der Studio-Page (`chrome-extension://`-Origin)
+auf `/api/v2/item_upload/items/{id}` liefert **200 mit JSON**, sobald die üblichen Header
+mitgehen. Ohne sie kommt **403 mit einer HTML-Seite** — also nicht die JSON-Ablehnung der
+API, sondern die Abwehrschicht davor.
+
+Gemessen mit demselben Artikel, nur die Header unterschieden sich:
+
+| Aufruf aus der Studio-Page | Ergebnis |
+|---|---|
+| ohne Header | `403` · HTML |
+| mit `X-CSRF-Token`, `X-Anon-Id`, `X-Requested-With`, `X-Enable-Multiple-Size-Groups`, `X-Upload-Form` | `200` · JSON |
+
+Konsequenzen:
+
+- **Der Origin ist für lesende Calls kein Hindernis.** Die 403 kam von den fehlenden
+  Headern, nicht von `chrome-extension://`.
+- **Stufe 2 braucht keinen offenen Vinted-Tab.** Taxonomie, Markensuche und Preisspanne
+  kann das Studio selbst holen; `taxonomy.js` bekommt `fetch` als Transport injiziert
+  (Entscheidung 15 im Auto-Listing-Konzept). Die Nachricht `draft/lookup` wird dafür nicht
+  gebraucht.
+- **Der Auth-Bundle muss trotzdem vorliegen.** Die Tokens stammen aus dem
+  webRequest-Snooping des Service Workers und werden pro Domain persistiert — ein einmal
+  besuchter Vinted-Tab genügt, ein *offener* nicht.
+- **Für schreibende Calls ändert das nichts.** ADR-0001 bleibt unangetastet: der Create
+  wurde in diesem Versuch **nicht** getestet, und die CSRF-/Origin-Prüfung beim Schreiben
+  ist genau der Punkt, an dem der SW-`fetch` seinerzeit scheiterte. Fotos hochladen und
+  Artikel erstellen laufen weiter über den Content-Script.
 
 ---
 

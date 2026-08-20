@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  parseUrl, buildItemUploadPayload, extractInterest, pickPhotoUrl, photoOrientation, parseValidationErrors,
-  conditionId, sizeId, fieldProbe
+  parseUrl, buildItemUploadPayload, buildNewItemPayload, extractInterest, pickPhotoUrl,
+  photoOrientation, parseValidationErrors, conditionId, sizeId, fieldProbe
 } from '../lib/item.js';
 import { ValidationError } from '../lib/errors.js';
 
@@ -328,4 +328,121 @@ test('buildItemUploadPayload: absent category fields go as null, like isbn alrea
     assert.equal(payload.item[key], null, `${key} must be explicit null, not undefined`);
     assert.ok(key in JSON.parse(JSON.stringify(payload)).item, `${key} must survive serialisation`);
   }
+});
+
+// ---------- buildNewItemPayload ----------
+
+/** Everything a resolved draft carries by the time publishing is released. */
+const fullDraft = {
+  title: 'Nike Hoodie M Schwarz',
+  description: 'Ein schlichter Hoodie.',
+  catalogId: 196,
+  brandId: 53,
+  brand: 'Nike',
+  sizeId: 105,
+  statusId: 2,
+  colorIds: [1, 27],
+  packageSizeId: 2,
+  price: 18,
+  currency: 'EUR'
+};
+const NEW_PHOTOS = [
+  { id: 111, temp_uuid: 'sess-1', orientation: 6 },
+  { id: 222, temp_uuid: 'sess-1', orientation: 3 }
+];
+
+test('buildNewItemPayload: carries every field Vinted needs for a create', () => {
+  const p = buildNewItemPayload(fullDraft, NEW_PHOTOS, 'sess-1');
+  assert.equal(p.item.title, 'Nike Hoodie M Schwarz');
+  assert.equal(p.item.catalog_id, 196);
+  assert.equal(p.item.brand_id, 53);
+  assert.equal(p.item.size_id, 105);
+  assert.equal(p.item.status_id, 2);
+  assert.equal(p.item.price, 18);
+  assert.equal(p.item.package_size_id, 2);
+  assert.deepEqual(p.item.color_ids, [1, 27]);
+  assert.equal(p.item.color1_id, 1);
+  assert.equal(p.item.color2_id, 27);
+  assert.equal(p.item.currency, 'EUR');
+});
+
+test('buildNewItemPayload: temp_uuid and upload_session_id are the same value', () => {
+  const p = buildNewItemPayload(fullDraft, NEW_PHOTOS, 'sess-1');
+  assert.equal(p.item.temp_uuid, 'sess-1');
+  assert.equal(p.upload_session_id, 'sess-1');
+});
+
+test('buildNewItemPayload: orientation is ALWAYS 0 — the canvas already uprighted the pixels', () => {
+  // The photos above carry EXIF orientations 6 and 3. Passing them through would rotate
+  // an already-rotated image a second time (KONZEPT §5.5).
+  const p = buildNewItemPayload(fullDraft, NEW_PHOTOS, 'sess-1');
+  assert.deepEqual(p.item.assigned_photos, [{ id: 111, orientation: 0 }, { id: 222, orientation: 0 }]);
+});
+
+test('buildNewItemPayload: ai_photo is false, as on the relist path', () => {
+  assert.equal(buildNewItemPayload(fullDraft, NEW_PHOTOS, 'sess-1').item.ai_photo, false);
+});
+
+test('buildNewItemPayload: falls back to the first photo\'s temp_uuid', () => {
+  const p = buildNewItemPayload(fullDraft, NEW_PHOTOS);
+  assert.equal(p.upload_session_id, 'sess-1');
+});
+
+test('buildNewItemPayload: a missing mandatory field throws — it never travels as undefined', () => {
+  for (const field of ['title', 'catalogId', 'statusId', 'price']) {
+    const draft = { ...fullDraft, [field]: undefined };
+    assert.throws(() => buildNewItemPayload(draft, NEW_PHOTOS, 'sess-1'), ValidationError, field);
+  }
+});
+
+test('buildNewItemPayload: a condition of null throws rather than being invented', () => {
+  // ADR-0005: the condition is shown to buyers and is legally binding.
+  assert.throws(() => buildNewItemPayload({ ...fullDraft, statusId: null }, NEW_PHOTOS, 'sess-1'), /status_id/);
+});
+
+test('buildNewItemPayload: a price of zero or nonsense is not a price', () => {
+  for (const price of [0, -5, 'teuer', null]) {
+    assert.throws(() => buildNewItemPayload({ ...fullDraft, price }, NEW_PHOTOS, 'sess-1'), /price/);
+  }
+});
+
+test('buildNewItemPayload: a numeric price string is accepted', () => {
+  assert.equal(buildNewItemPayload({ ...fullDraft, price: '18.5' }, NEW_PHOTOS, 'sess-1').item.price, 18.5);
+});
+
+test('buildNewItemPayload: no photos, no listing', () => {
+  assert.throws(() => buildNewItemPayload(fullDraft, [], 'sess-1'), /Foto/);
+  assert.throws(() => buildNewItemPayload(fullDraft, []), ValidationError);
+});
+
+test('buildNewItemPayload: optional ids go as null, never as undefined', () => {
+  const sparse = { ...fullDraft, brandId: undefined, brand: undefined, sizeId: undefined, packageSizeId: undefined, colorIds: undefined };
+  const p = buildNewItemPayload(sparse, NEW_PHOTOS, 'sess-1');
+  for (const key of ['brand_id', 'brand', 'size_id', 'package_size_id', 'color1_id', 'color2_id']) {
+    assert.equal(p.item[key], null, key);
+  }
+  assert.deepEqual(p.item.color_ids, []);
+  assert.ok(!JSON.stringify(p).includes('undefined'));
+});
+
+test('buildNewItemPayload: no source item means no replayed media fields', () => {
+  const p = buildNewItemPayload(fullDraft, NEW_PHOTOS, 'sess-1');
+  assert.equal(p.item.measurement_length, null);
+  assert.equal(p.item.measurement_unit, null);
+  assert.equal(p.item.isbn, null);
+  assert.deepEqual(p.item.item_attributes, []);
+});
+
+test('buildNewItemPayload: the envelope matches the relist create exactly', () => {
+  const p = buildNewItemPayload(fullDraft, NEW_PHOTOS, 'sess-1');
+  assert.equal(p.feedback_id, null);
+  assert.equal(p.push_up, false);
+  assert.equal(p.parcel, null);
+  assert.deepEqual(p.item.shipment_prices, { domestic: null, international: null });
+});
+
+test('buildNewItemPayload: it is a SECOND builder — the relist one is untouched', () => {
+  // ADR-0004: a change to reading must not be able to break creating.
+  const relist = buildItemUploadPayload(fullSrc, [{ id: 9, temp_uuid: 'u', orientation: 6 }], 'u');
+  assert.equal(relist.item.assigned_photos[0].orientation, 6, 'the relist path still replays EXIF');
 });

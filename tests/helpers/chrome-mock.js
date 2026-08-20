@@ -1,10 +1,11 @@
 // Minimal in-memory stand-in for the subset of chrome.* APIs our lib modules use.
 // Each call to installChromeMock() resets global state.
 // `cookies` maps cookie name → value (for chrome.cookies.get).
-export function installChromeMock(initial = {}, cookies = {}) {
+export function installChromeMock(initial = {}, cookies = {}, sessionInitial = {}) {
   const store = structuredClone(initial);
+  const sessionStore = structuredClone(sessionInitial);
 
-  const local = {
+  const area = (store) => ({
     get: async (keys) => {
       if (keys == null) return structuredClone(store);
       if (typeof keys === 'string') return { [keys]: store[keys] };
@@ -23,10 +24,12 @@ export function installChromeMock(initial = {}, cookies = {}) {
       for (const k of (Array.isArray(keys) ? keys : [keys])) delete store[k];
     },
     clear: async () => { for (const k of Object.keys(store)) delete store[k]; }
-  };
+  });
 
   globalThis.chrome = {
-    storage: { local },
+    // `session` is wiped when the browser closes — that is where the decrypted API key
+    // lives (lib/secret.js), so it must be a separate store here too.
+    storage: { local: area(store), session: area(sessionStore) },
     runtime: { getManifest: () => ({ version: '0.29.0' }) },
     cookies: {
       get: (query, cb) => {
@@ -38,5 +41,5 @@ export function installChromeMock(initial = {}, cookies = {}) {
     }
   };
 
-  return { store, cookies };
+  return { store, cookies, sessionStore };
 }

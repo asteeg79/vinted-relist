@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { sleep, jitter, uuidV4, arrayBufferToBase64 } from '../lib/util.js';
+import { sleep, jitter, uuidV4, arrayBufferToBase64, base64ToBytes } from '../lib/util.js';
 
 test('sleep: resolves after roughly the given delay', async () => {
   const t0 = Date.now();
@@ -59,6 +59,18 @@ test('arrayBufferToBase64: handles large buffers (>32KB chunk boundary)', () => 
   const big = new Uint8Array(70000).map((_, i) => i % 256);
   const b64 = arrayBufferToBase64(big.buffer);
   const back = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+  assert.equal(back.length, 70000);
+  assert.equal(back[69999], 69999 % 256);
+});
+
+test('base64ToBytes: is the exact inverse of arrayBufferToBase64', () => {
+  const bytes = new Uint8Array([0, 1, 2, 127, 128, 254, 255]);
+  assert.deepEqual([...base64ToBytes(arrayBufferToBase64(bytes.buffer))], [...bytes]);
+});
+
+test('base64ToBytes: survives the chunk boundary too', () => {
+  const big = new Uint8Array(70000).map((_, i) => i % 256);
+  const back = base64ToBytes(arrayBufferToBase64(big.buffer));
   assert.equal(back.length, 70000);
   assert.equal(back[69999], 69999 % 256);
 });

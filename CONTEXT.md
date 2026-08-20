@@ -61,6 +61,65 @@ Destroyed by a relist, which is the whole reason the interest gate exists.
 
 **Cooldown counts** — relists in the last rolling hour and 24 hours, from the history.
 
+## Auto-Listing
+
+Die Begriffe der zweiten Pipeline (ADR-0007, `docs/KONZEPT_AUTO_LISTING.md`) stehen hier
+in der Sprache, in der sie im Studio erscheinen. Sie werden in Code, Kommentaren,
+Log-Events und Tests exakt so verwendet wie hier definiert.
+
+**Draft** — ein in Vorbereitung befindliches neues Inserat: zugeschnittene Fotos,
+erkannte Felder, gebauter Titel, Beschreibung, Preis. Ein Draft existiert nur lokal;
+er wird zu einem Listing, wenn er veröffentlicht wird. Nie „Entwurf", nie „Listing",
+solange er nicht veröffentlicht ist.
+
+**Studio** — die Extension-Page (`studio/`), in der Drafts entstehen: Foto-Intake,
+Zuschnitt, KI-Erkennung, Review. Ein eigener Tab, nicht das Popup. Das Studio trifft
+keine Entscheidungen; es rendert das Modell aus `lib/draft-view.js`.
+
+**Vorbereitung** — alles am Draft, was Vinted nicht oder nur lesend berührt: Zuschnitt,
+Erkennung, Textbau, Taxonomie-Lookups. Läuft frei, auch parallel zu einem Relist.
+
+**Veröffentlichen** — die schreibende Phase: Foto-Upload plus Create. Nimmt dasselbe
+Lock wie `relist()`. Nie „posten", nie „einstellen" im Code.
+
+**Objektbox** — das Rechteck, in dem `crop.js` den fotografierten Artikel vermutet,
+inklusive Sicherheitsrand. Nie „Bounding Box".
+
+**Rahmen** — der 4:5-Ausschnitt, der aus einem Foto wird. Ein Rahmen schneidet nie in die
+Objektbox; passt keiner um sie herum, wird stattdessen gepaddet.
+
+**Padding** — das Auffüllen fehlender Bildfläche auf Hintergrundfarbe, statt das Objekt
+zu beschneiden. Der sichere Ausgang jedes Zweifelsfalls.
+
+**Profil** — der Satz Titel-Slots einer Warengruppe (`clothing`, `shoes`, `accessories`,
+`media`, `generic`), mit Pflicht-Slots und Kürzungsreihenfolge. Für Kleidung: Marke, Art,
+Größe, Farbe — Größe ist Pflicht.
+
+**Titelbild** — das erste Foto eines Drafts. Vinted zeigt es in der Trefferliste, es
+entscheidet mit, ob überhaupt jemand klickt. Die KI schlägt die Reihenfolge vor, der
+Nutzer sortiert per Ziehen um; anders als ein Feldzustand blockiert ein suboptimales
+Titelbild nichts.
+
+**Feldzustand** — je Draft-Feld einer von `ok`, `needs_confirmation`, `missing`.
+Veröffentlichen ist erst freigegeben, wenn kein Feld mehr in den letzten beiden Zuständen
+ist. Ein vorbelegter Wert (etwa Zustand „Sehr gut") ist bis zur Bestätigung
+`needs_confirmation`, nicht `ok`.
+
+**Trockenlauf** — `draftCreateEnabled: false`: Der Draft läuft bis zur fertigen Payload,
+die ins Log geht; der Create unterbleibt. Das Gegenstück zum Testmodus beim Relist.
+
+### Ausgänge eines Veröffentlichungsversuchs
+
+**Erfolg** — Fotos hochgeladen, Artikel erstellt.
+
+**Trockenlauf** — Payload gebaut und geloggt, nichts gesendet, weil `draftCreateEnabled`
+aus ist.
+
+**Fehler** — nichts ist entstanden. Auch dann, wenn Fotos bereits hochgeladen waren: Die
+Upload-Session wird nicht wiederverwendet, ein neuer Versuch lädt mit frischer
+`temp_uuid` neu hoch. Anders als beim Relist gibt es hier **kein Partial** — ohne Artikel
+ist nichts entstanden, das der Nutzer von Hand auflösen müsste.
+
 ## Session and identity
 
 **Auth bundle** — `{ csrf, anonId, vUdt, vUid }`, everything needed to make a

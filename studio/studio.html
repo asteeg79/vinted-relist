@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="studio.css">
+  <title>Studio – Vinted Relist</title>
+</head>
+<body>
+  <header class="header">
+    <div class="brand">
+      <h1>Studio</h1>
+      <p class="subtitle">Aus Fotos wird ein Inserat</p>
+    </div>
+    <div class="stage-note" id="stageNote">Stufe 1 — kein Kontakt zu Vinted</div>
+  </header>
+
+  <main class="layout">
+    <!-- ---------- Left: intake + photos ---------- -->
+    <section class="col">
+      <h2>1 · Fotos</h2>
+
+      <div id="dropzone" class="dropzone" tabindex="0" role="button"
+           aria-label="Fotos hierher ziehen oder klicken zum Auswählen">
+        <p class="drop-title">Fotos hierher ziehen</p>
+        <p class="drop-hint">oder klicken zum Auswählen · max. <span id="maxPhotos">8</span> Fotos</p>
+        <input id="filePicker" type="file" accept="image/*" multiple hidden>
+      </div>
+
+      <p id="intakeStatus" class="hint" role="status" aria-live="polite"></p>
+
+      <ul id="photoList" class="photo-list"></ul>
+
+      <p class="hint warn" id="volatileHint" hidden>
+        Beim Schließen gehen die Bilder verloren, Texte bleiben.
+      </p>
+      <p class="hint">
+        Die Fotos werden zur Erkennung an einen Drittanbieter (Anthropic) gesendet.
+        Hintergrund und mitfotografierte Personen landen dort mit.
+      </p>
+    </section>
+
+    <!-- ---------- Middle: analysis ---------- -->
+    <section class="col">
+      <h2>2 · Erkennung</h2>
+      <button id="analyse" class="btn-primary" disabled>
+        <span class="btn-label">Artikel erkennen</span>
+        <span class="spinner" aria-hidden="true"></span>
+      </button>
+      <p id="analyseStatus" class="status" role="status" aria-live="polite"></p>
+
+      <div id="notes" class="notes" hidden>
+        <strong>Anmerkungen der Erkennung</strong>
+        <ul id="notesList"></ul>
+      </div>
+    </section>
+
+    <!-- ---------- Right: review ---------- -->
+    <section class="col">
+      <h2>3 · Prüfen</h2>
+
+      <div class="title-box">
+        <span class="title-label">Titel</span>
+        <output id="titleOut" class="title-out">—</output>
+        <span id="titleLen" class="title-len"></span>
+      </div>
+
+      <ul id="fieldList" class="field-list"></ul>
+
+      <label class="block-label" for="descOut">Beschreibung</label>
+      <textarea id="descOut" class="desc-out" rows="7" spellcheck="false"></textarea>
+
+      <div id="blockerBox" class="warn-box" hidden>
+        <strong>Noch offen</strong>
+        <ul id="blockerList"></ul>
+      </div>
+
+      <div class="actions">
+        <button id="copyAll" class="btn-secondary">Titel &amp; Text kopieren</button>
+        <button id="downloadAll" class="btn-secondary">Fotos herunterladen</button>
+      </div>
+      <button id="publish" class="btn-primary" disabled>
+        <span class="btn-label">Veröffentlichen</span>
+        <span class="spinner" aria-hidden="true"></span>
+      </button>
+      <p id="publishStatus" class="status" role="status" aria-live="polite"></p>
+      <p class="hint" id="publishHint">Trockenlauf: die Payload geht ins Log, es wird nichts eingestellt.</p>
+
+      <!-- One box renders every gate; the copy comes from lib/gates.js. -->
+      <div id="gateBox" class="warn-box" hidden>
+        <strong id="gateTitle"></strong>
+        <p id="gateText"></p>
+        <p id="gateNote"></p>
+        <div class="actions">
+          <button id="gateCancel" class="btn-secondary">Abbrechen</button>
+          <button id="gateProceed" class="btn-primary">Fortfahren</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script type="module" src="studio.js"></script>
+</body>
+</html>

@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Bash(perl -0pi -e ' *)"
+      "Bash(perl -0pi -e ' *)",
+      "Read(//Users/asteeg/Downloads/**)"
     ]
   }
 }

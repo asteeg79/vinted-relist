@@ -12,7 +12,8 @@
  * drifted apart. This file is an ES module (see popup.html) so the settings screen and
  * history list read the real lib/* modules rather than mirroring them.
  */
-import { getSettings, saveSettings } from '../lib/settings.js';
+import { getSettings, saveSettings, DEFAULT_DESCRIPTION_TEMPLATE, CONDITION_OPTIONS } from '../lib/settings.js';
+import { storeKey, unlockKey, hasStoredKey, readCachedKey, clearKey } from '../lib/secret.js';
 import { parseUrl } from '../lib/item.js';
 import { PROGRESS_KEY } from '../lib/progress.js';
 import { LOG_KEY, clearLog } from '../lib/logger.js';
@@ -218,6 +219,12 @@ $('go').addEventListener('click', async () => {
   }
 });
 
+// The studio needs its own tab: the popup dies on every click beside it, which makes it
+// useless for drag & drop, preview and review (ADR-0007).
+$('openStudio').addEventListener('click', () => {
+  chrome.tabs.create({ url: chrome.runtime.getURL('studio/studio.html') });
+});
+
 /** Turn a gates.js message into the popup's HTML, appending links when it carries ids. */
 function renderMessage(message) {
   const parts = [escapeHtml(message.text || '')];
@@ -297,6 +304,30 @@ async function loadSettingsIntoForm() {
   $('qualityValue').textContent = quality;
   $('setWarnHour').value = s.cooldownWarnPerHour;
   $('setWarn24h').value = s.cooldownWarnPer24h;
+
+  // Auto-listing
+  $('setDraftCreate').checked = !!s.draftCreateEnabled;
+  $('setDraftLanguage').value = s.draftLanguage;
+  fillConditionOptions($('setDraftCondition'));
+  $('setDraftCondition').value = s.draftConditionDefault;
+  $('setCropCheck').value = s.cropCheckMode;
+  const confidence = Math.round((s.draftConfidenceThreshold || 0.8) * 100);
+  $('setConfidence').value = confidence;
+  $('confidenceValue').textContent = confidence;
+  $('setMinPrice').value = s.draftMinPrice;
+  $('setTemplate').value = s.draftDescriptionTemplate;
+  await refreshKeyStatus();
+}
+
+/** Fill a <select> from the shared condition list, so popup and studio can't drift. */
+function fillConditionOptions(select) {
+  if (select.options.length) return;
+  for (const { value, label } of CONDITION_OPTIONS) {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = label;
+    select.appendChild(option);
+  }
 }
 
 /** Wire a checkbox to auto-save its setting on change. */
@@ -352,6 +383,86 @@ $('resetConfirm').addEventListener('click', async (e) => {
   const btn = e.currentTarget;
   btn.textContent = 'Zurückgesetzt ✓';
   setTimeout(() => { btn.textContent = 'Erst-Bestätigung zurücksetzen'; }, 1500);
+});
+
+// ---------- Auto-listing settings ----------
+bindAutosave('setDraftCreate', () => ({ draftCreateEnabled: $('setDraftCreate').checked }));
+bindAutosave('setDraftLanguage', () => ({ draftLanguage: $('setDraftLanguage').value }));
+bindAutosave('setDraftCondition', () => ({ draftConditionDefault: $('setDraftCondition').value }));
+bindAutosave('setCropCheck', () => ({ cropCheckMode: $('setCropCheck').value }));
+bindAutosave('setTemplate', () => ({ draftDescriptionTemplate: $('setTemplate').value }));
+
+// Confidence: live label on input, persist on change (÷100 back to the 0–1 range).
+$('setConfidence').addEventListener('input', () => {
+  $('confidenceValue').textContent = $('setConfidence').value;
+});
+$('setConfidence').addEventListener('change', async () => {
+  await saveSettings({ draftConfidenceThreshold: parseInt($('setConfidence').value, 10) / 100 });
+  flashSaved();
+});
+
+$('setMinPrice').addEventListener('change', async () => {
+  const v = Math.max(0, parseInt($('setMinPrice').value, 10) || 0);
+  $('setMinPrice').value = v;
+  await saveSettings({ draftMinPrice: v });
+  flashSaved();
+});
+
+$('resetTemplate').addEventListener('click', async (e) => {
+  e.preventDefault();
+  $('setTemplate').value = DEFAULT_DESCRIPTION_TEMPLATE;
+  await saveSettings({ draftDescriptionTemplate: DEFAULT_DESCRIPTION_TEMPLATE });
+  flashSaved();
+});
+
+// ---------- API key ----------
+/**
+ * The key line says three different things, and the difference matters: no key yet, a key
+ * that needs the passphrase for this browser session, or a key ready to use.
+ */
+async function refreshKeyStatus() {
+  if (await readCachedKey()) return setKeyStatus('Key ist für diese Browser-Sitzung entsperrt.', 'ok');
+  if (await hasStoredKey()) return setKeyStatus('Key gespeichert — Passphrase eingeben und entsperren.', '');
+  setKeyStatus('Noch kein Key hinterlegt.', '');
+}
+
+function setKeyStatus(text, kind = '') {
+  const el = $('keyStatus');
+  el.className = 'key-status' + (kind ? ' ' + kind : '');
+  el.textContent = text;
+}
+
+/** Clear both secret fields once they've been used — nothing lingers in the DOM. */
+function clearKeyInputs() {
+  $('setApiKey').value = '';
+  $('setPassphrase').value = '';
+}
+
+$('saveKey').addEventListener('click', async () => {
+  try {
+    await storeKey($('setApiKey').value, $('setPassphrase').value);
+    clearKeyInputs();
+    setKeyStatus('Gespeichert und entsperrt.', 'ok');
+  } catch (e) {
+    setKeyStatus(e.message, 'error');
+  }
+});
+
+$('unlockKeyBtn').addEventListener('click', async () => {
+  try {
+    await unlockKey($('setPassphrase').value);
+    clearKeyInputs();
+    setKeyStatus('Entsperrt für diese Browser-Sitzung.', 'ok');
+  } catch (e) {
+    setKeyStatus(e.message, 'error');
+  }
+});
+
+$('clearKeyBtn').addEventListener('click', async (e) => {
+  e.preventDefault();
+  await clearKey();
+  clearKeyInputs();
+  setKeyStatus('Key gelöscht.', '');
 });
 
 // ---------- Init ----------

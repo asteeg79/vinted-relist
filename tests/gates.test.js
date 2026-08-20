@@ -2,8 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   gatesFor, describeOutcome, describeFailure,
-  GATE_FIRST_RUN, GATE_COOLDOWN, GATE_INTEREST
-} from '../lib/gates.js';
+  GATE_FIRST_RUN, GATE_COOLDOWN, GATE_INTEREST, draftGatesFor, describeDraftOutcome, GATE_FIRST_CREATE } from '../lib/gates.js';
 import { DEFAULT_SETTINGS } from '../lib/settings.js';
 
 const settings = (patch = {}) => ({ ...DEFAULT_SETTINGS, ...patch });
@@ -190,4 +189,55 @@ test('every message kind is one both UIs can render', () => {
     assert.ok(['ok', 'warning', 'error'].includes(m.kind), `unexpected kind: ${m.kind}`);
     assert.equal(typeof m.text, 'string');
   }
+});
+
+// ---------- the auto-listing's gates ----------
+
+test('draftGatesFor: the dry run needs no warning — nothing becomes public', () => {
+  const gates = draftGatesFor({ settings: { draftCreateEnabled: false }, confirmedCreate: false });
+  assert.deepEqual(gates, []);
+});
+
+test('draftGatesFor: the first LIVE create is announced, once', () => {
+  const gates = draftGatesFor({ settings: { draftCreateEnabled: true }, confirmedCreate: false });
+  assert.equal(gates.length, 1);
+  assert.equal(gates[0].kind, GATE_FIRST_CREATE);
+  assert.equal(gates[0].remember, true);
+  assert.match(gates[0].text, /öffentlich/);
+});
+
+test('draftGatesFor: once acknowledged it does not come back', () => {
+  const gates = draftGatesFor({ settings: { draftCreateEnabled: true }, confirmedCreate: true });
+  assert.deepEqual(gates, []);
+});
+
+test('draftGatesFor: it is a separate acknowledgement from the relist one', () => {
+  // Accepting that a relist deletes the original says nothing about publishing a
+  // machine-written listing.
+  const gates = draftGatesFor({ settings: { draftCreateEnabled: true, deleteEnabled: true }, confirmedCreate: false });
+  assert.equal(gates.length, 1);
+  assert.notEqual(gates[0].kind, GATE_FIRST_RUN);
+});
+
+test('draftGatesFor: every gate has the shape both UIs render', () => {
+  for (const gate of draftGatesFor({ settings: { draftCreateEnabled: true } })) {
+    assert.equal(typeof gate.title, 'string');
+    assert.ok(Array.isArray(gate.lines));
+    assert.equal(typeof gate.note, 'string');
+    assert.equal(typeof gate.remember, 'boolean');
+  }
+});
+
+test('describeDraftOutcome: a dry run is neither success nor failure', () => {
+  const m = describeDraftOutcome({ dryRun: true, payload: {} });
+  assert.equal(m.kind, 'warning');
+  assert.match(m.text, /Trockenlauf/);
+  assert.equal(m.newId, undefined);
+});
+
+test('describeDraftOutcome: a real listing carries its link', () => {
+  const m = describeDraftOutcome({ newId: 7, newUrl: 'https://www.vinted.de/items/7', title: 'Nike Hoodie M' });
+  assert.equal(m.kind, 'ok');
+  assert.equal(m.newId, 7);
+  assert.match(m.text, /Nike Hoodie M/);
 });

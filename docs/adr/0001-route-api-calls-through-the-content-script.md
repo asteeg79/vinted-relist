@@ -28,8 +28,22 @@ which then carries the correct same-origin `Origin` and the user's cookies.
 - The seam adds a hop to every call and a message shape that must be kept in step on both
   sides. `tests/page-call.test.js` covers the round trip.
 
+## Addendum 2026-08-14 — reads are a different question
+
+Measured during the auto-listing spike (see `docs/TECHNISCHE_DOKUMENTATION.md` §6): a
+**GET** from an extension page (`chrome-extension://` origin) to
+`/api/v2/item_upload/items/{id}` returns **200 with JSON** as long as the usual headers
+(`X-CSRF-Token`, `X-Anon-Id`, `X-Requested-With`, …) go with it. Without them it is 403
+with an HTML page — the edge, not the API.
+
+That does not soften this ADR: it was always about *state-changing* requests, and the
+create call was **not** retested. Reads may go direct (the auto-listing taxonomy lookups
+do, which is why Stufe 2 needs no open Vinted tab); writes keep crossing the content
+script until someone measures otherwise.
+
 ## Do not re-suggest
 
-"Just fetch from the service worker." It returns 403. If you want to re-open this, the
-only thing that would change the answer is Vinted dropping the Origin check — verify that
-against the live API first.
+"Just fetch from the service worker." It returns 403 for state-changing calls. If you want
+to re-open this, the only thing that would change the answer is Vinted dropping the Origin
+check on writes — verify that against the live API first, the same way the read case above
+was verified, and write the result down.

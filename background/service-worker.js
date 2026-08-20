@@ -14,6 +14,12 @@
  *                                                           replies with a `message` describing
  *                                                           the outcome for the UI to render
  *   relist/confirmed  {}                                  → remember the first-run acknowledgement
+ *   draft/gates       {}                                  → the gates the studio must walk
+ *                                                           before a LIVE create
+ *   draft/publish     {request}                           → upload photos + create the new
+ *                                                           listing; replies with a `message`
+ *   draft/confirmed   {}                                  → remember the first-create
+ *                                                           acknowledgement
  *
  * All handlers reply asynchronously, so each returns `true` to keep the message channel
  * open until sendResponse is called.
@@ -22,11 +28,13 @@
  * for themselves — see lib/gates.js for why.
  */
 import { relist, preflight } from '../lib/relist.js';
+import { publishDraft } from '../lib/draft.js';
 import { saveLiveTokens, extractTokensFromHeaders } from '../lib/auth.js';
 import { clearProgress } from '../lib/progress.js';
 import { apiMatchPatterns } from '../lib/domains.js';
-import { describeOutcome, describeFailure } from '../lib/gates.js';
-import { setConfirmedDelete } from '../lib/confirmation.js';
+import { describeOutcome, describeFailure, describeDraftOutcome, draftGatesFor } from '../lib/gates.js';
+import { setConfirmedDelete, setConfirmedCreate, hasConfirmedCreate } from '../lib/confirmation.js';
+import { getSettings } from '../lib/settings.js';
 
 // --- Passive token snooper ---------------------------------------------------------
 // Every time the Vinted SPA makes an API call, capture its X-CSRF-Token / X-Anon-Id so
@@ -74,6 +82,34 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
     case 'relist/confirmed':
       setConfirmedDelete()
+        .then(() => sendResponse({ ok: true }))
+        .catch(err => sendResponse({ ok: false, error: err.message }));
+      return true;
+
+    // --- Auto-Listing (ADR-0007) -----------------------------------------------------
+    // Only the WRITING half crosses this seam. Preparation — cropping, recognition,
+    // taxonomy lookups — runs in the studio and never reaches the worker, which is what
+    // keeps it free of the 30-second lifetime problem: one call, one answer.
+    case 'draft/gates':
+      Promise.all([getSettings(), hasConfirmedCreate()])
+        .then(([settings, confirmedCreate]) => sendResponse({ ok: true, gates: draftGatesFor({ settings, confirmedCreate }) }))
+        .catch(err => sendResponse({ ok: false, error: err.message }));
+      return true;
+
+    case 'draft/publish':
+      publishDraft(msg.request)
+        .then(result => {
+          setTimeout(() => clearProgress(), 2500);
+          sendResponse({ ok: true, ...result, message: describeDraftOutcome(result) });
+        })
+        .catch(async err => {
+          await clearProgress();
+          sendResponse({ ok: false, error: err.message, name: err.name, message: describeFailure(err) });
+        });
+      return true;
+
+    case 'draft/confirmed':
+      setConfirmedCreate()
         .then(() => sendResponse({ ok: true }))
         .catch(err => sendResponse({ ok: false, error: err.message }));
       return true;
