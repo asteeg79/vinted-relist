@@ -47,8 +47,9 @@ export const READY_DRAFT = {
   price: { value: 18, source: 'range' },
   condition: 2,
   confirmations: { condition: true },
-  photos: [{ touchesEdge: false, judged: true }, { touchesEdge: false, judged: true }],
-  packageSizeId: 2
+  photos: [{ touchesEdge: false, judged: true }, { touchesEdge: false, judged: true }]
+  // Keine `packageSizeId`: die Sendungsgröße kommt aus Vinteds eigenem Vorschlag und
+  // braucht die upload_session_id, existiert also erst mitten in der Pipeline.
 };
 
 export const PHOTOS = [
@@ -88,6 +89,8 @@ export function makeFakeDraftPort(opts = {}) {
       colors: [{ id: 1, title: 'Schwarz' }],
       sizes: []
     })),
+    categoryAttributes: (domain, auth, catalogId) => rec('categoryAttributes', [domain, auth, catalogId], () => []),
+    suggestPackageSize: (domain, opt) => rec('suggestPackageSize', [domain, opt], () => 2),
     createItem: (domain, auth, payload, opt) =>
       rec('createItem', [domain, auth, payload, opt], () => ({ id: 555001 })),
 

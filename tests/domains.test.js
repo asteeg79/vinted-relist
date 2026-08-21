@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { VINTED_HOSTS, tabMatchPatterns, apiMatchPatterns, isVintedHost } from '../lib/domains.js';
+import { VINTED_HOSTS, tabMatchPatterns, apiMatchPatterns, isVintedHost, apiHostFor } from '../lib/domains.js';
 
 test('VINTED_HOSTS: contains key markets, no duplicates', () => {
   for (const h of ['vinted.de', 'vinted.fr', 'vinted.com', 'vinted.co.uk']) {
@@ -29,4 +29,21 @@ test('isVintedHost: accepts vinted ccTLDs, rejects others', () => {
   assert.ok(!isVintedHost('notvinted.com'));
   assert.ok(!isVintedHost(''));
   assert.ok(!isVintedHost(null));
+});
+
+test('apiHostFor: the shipping service lives on api.<domain>', () => {
+  assert.equal(apiHostFor('www.vinted.de'), 'api.vinted.de');
+  assert.equal(apiHostFor('vinted.de'), 'api.vinted.de');
+  assert.equal(apiHostFor('www.vinted.co.uk'), 'api.vinted.co.uk');
+  assert.equal(apiHostFor('WWW.VINTED.FR'), 'api.vinted.fr');
+});
+
+test('apiHostFor: never stacks a second api. onto a host that already has one', () => {
+  assert.equal(apiHostFor('api.vinted.de'), 'api.vinted.de');
+});
+
+test('apiHostFor: no domain, no host — the caller builds no URL from a guess', () => {
+  assert.equal(apiHostFor(''), null);
+  assert.equal(apiHostFor(null), null);
+  assert.equal(apiHostFor(undefined), null);
 });

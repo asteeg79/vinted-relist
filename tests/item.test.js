@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   parseUrl, buildItemUploadPayload, buildNewItemPayload, extractInterest, pickPhotoUrl,
-  photoOrientation, parseValidationErrors, conditionId, sizeId, fieldProbe
+  photoOrientation, parseValidationErrors, conditionId, sizeId, fieldProbe,
+  unfillableAttributeCodes
 } from '../lib/item.js';
 import { ValidationError } from '../lib/errors.js';
 
@@ -445,4 +446,39 @@ test('buildNewItemPayload: it is a SECOND builder — the relist one is untouche
   // ADR-0004: a change to reading must not be able to break creating.
   const relist = buildItemUploadPayload(fullSrc, [{ id: 9, temp_uuid: 'u', orientation: 6 }], 'u');
   assert.equal(relist.item.assigned_photos[0].orientation, 6, 'the relist path still replays EXIF');
+});
+
+// ---------- what a category demands and we cannot supply ----------
+//
+// The auto-listing path has no source item to replay the bag from, and an attribute value
+// cannot be guessed (ADR-0005). So the question is only: is there something here we have
+// no answer for? `draft.js` stops the draft on the answer — before the first upload.
+
+test('unfillableAttributeCodes: an empty list is nothing to stop for', () => {
+  assert.deepEqual(unfillableAttributeCodes([]), []);
+  assert.deepEqual(unfillableAttributeCodes(), []);
+  assert.deepEqual(unfillableAttributeCodes(null), []);
+});
+
+test('unfillableAttributeCodes: names what we cannot answer', () => {
+  const codes = unfillableAttributeCodes([
+    { code: 'language_book', value_ids: [] },
+    { code: 'video_game_platform', value_ids: [] }
+  ]);
+  assert.deepEqual(codes, ['language_book', 'video_game_platform']);
+});
+
+test('unfillableAttributeCodes: skips what the payload already carries in its own column', () => {
+  // The bag repeats fields that are top-level columns too. Stopping a draft over a size
+  // we DID resolve would block the normal case.
+  assert.deepEqual(unfillableAttributeCodes([
+    { code: 'size' }, { code: 'color' }, { code: 'condition' }, { code: 'brand' },
+    { code: 'isbn' }, { code: 'CATEGORY' }
+  ]), []);
+});
+
+test('unfillableAttributeCodes: no code is nothing to report, and each one only once', () => {
+  assert.deepEqual(unfillableAttributeCodes([
+    {}, { code: '' }, { code: '  ' }, null, { code: 'language_book' }, { code: 'language_book' }
+  ]), ['language_book']);
 });

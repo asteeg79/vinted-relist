@@ -7,6 +7,15 @@ import { memoryKey, rememberPrice } from '../lib/price-memory.js';
 import { PROFILES, buildTitle } from '../lib/title.js';
 import { DEFAULT_SETTINGS } from '../lib/settings.js';
 
+/** Vinteds Zustandsliste für eine Kleidungskategorie, gemessen am 2026-08-20. */
+const CONDITIONS = [
+  { id: 6, title: 'Neu, mit Etikett' },
+  { id: 1, title: 'Neu' },
+  { id: 2, title: 'Sehr gut' },
+  { id: 3, title: 'Gut' },
+  { id: 4, title: 'Zufriedenstellend' }
+];
+
 /** A confidently recognised hoodie — every slot filled, everything above the threshold. */
 function analysis(overrides = {}) {
   return {
@@ -37,18 +46,38 @@ function analysis(overrides = {}) {
 const state = (view, key) => view.fields.find(f => f.key === key)?.state;
 const field = (view, key) => view.fields.find(f => f.key === key);
 
-/** Everything a draft needs to be publishable: price set, condition confirmed. */
+/**
+ * Everything a draft needs to be publishable: price set, condition confirmed — and a
+ * resolved CATEGORY.
+ *
+ * The category's id used to be absent here, and the suite was green anyway. That was the
+ * fixture encoding the bug: a draft whose category never resolved counted as ready,
+ * `canPublish` went true, and the failure surfaced only in `buildNewItemPayload`
+ * (`Pflichtfeld fehlt: catalog_id`) — after the write lock was taken and three photos had
+ * been uploaded. The labels are kept identical to the model's words so the titles under
+ * test do not move; only the ids a real resolution carries are added.
+ */
 function ready(overrides = {}) {
   return {
     analysis: analysis(),
     settings: DEFAULT_SETTINGS,
+    // ONLY the catalog. Brand, size and colour are deliberately left unresolved so the
+    // tests around them keep exercising the model's own confidences — and because those
+    // three are nullable in the payload, an id is not what makes a draft ready.
+    resolved: { catalog: { id: 1806, label: 'Hoodie', confidence: 1, candidates: [] } },
     price: { value: 18, source: 'range' },
     condition: 2,
+    // Vinteds own list, as `taxonomy.conditions` returns it. The ids are the measured ones.
+    conditions: CONDITIONS,
     confirmations: { condition: true },
     photos: [{ touchesEdge: false }, { touchesEdge: false }],
     ...overrides
   };
 }
+
+/** `ready()` but with one resolution replaced, the rest intact. */
+const readyWith = (resolution, extra = {}) =>
+  ready({ resolved: { ...ready().resolved, ...resolution }, ...extra });
 
 // ---------- field states ----------
 
@@ -68,7 +97,12 @@ test('draftView: a field below the confidence threshold needs confirmation', () 
 });
 
 test('draftView: confirming that field releases it — and only it', () => {
-  const base = ready({ analysis: analysis({ brand_confidence: 0.5, type_confidence: 0.4 }) });
+  // The category is RESOLVED but weakly — Vinted's own keyword search answers at 0.5, so
+  // it has an id and still has to be looked at.
+  const base = readyWith(
+    { catalog: { id: 1806, label: 'Hoodie', confidence: 0.4, candidates: [] } },
+    { analysis: analysis({ brand_confidence: 0.5 }) }
+  );
   const view = draftView({ ...base, confirmations: { ...base.confirmations, brand: true } });
   assert.equal(state(view, 'brand'), FIELD_OK);
   assert.equal(state(view, 'category'), FIELD_NEEDS_CONFIRMATION);
@@ -106,13 +140,74 @@ test('draftView: an optional field left empty does not block', () => {
 });
 
 test('draftView: two equally good candidates are an ambiguity, not a pick', () => {
-  const view = draftView(ready({
-    resolved: { catalog: { label: 'Hoodie', confidence: 0.99, candidates: [{ id: 1, label: 'Hoodies' }, { id: 2, label: 'Sweatshirts' }] } }
+  const view = draftView(readyWith({
+    catalog: { label: 'Hoodie', confidence: 0.99, candidates: [{ id: 1, label: 'Hoodies' }, { id: 2, label: 'Sweatshirts' }] }
   }));
   const f = field(view, 'category');
-  assert.equal(f.state, FIELD_NEEDS_CONFIRMATION);
+  // MISSING, not "confirm me": there is no catalog_id yet, and pressing "Passt" cannot
+  // produce one. Only choosing from the candidates can.
+  assert.equal(f.state, FIELD_MISSING);
   assert.equal(f.candidates.length, 2);
   assert.equal(view.canPublish, false);
+});
+
+test('draftView: an ambiguous brand IS confirmable — only the category needs an id', () => {
+  // The payload takes `brand_id: null` plus a free-text brand; `catalog_id: null` is a throw.
+  const view = draftView(readyWith(
+    { brand: { label: 'Nike', confidence: 0.99, candidates: [{ id: 1, label: 'Nike' }, { id: 2, label: 'Nike ACG' }] } },
+    { confirmations: { condition: true, brand: true } }
+  ));
+  assert.equal(state(view, 'brand'), FIELD_OK);
+  assert.equal(view.canPublish, true);
+});
+
+// ---------- the category needs an id, not a word ----------
+
+test('draftView: an unresolved category blocks, however confidently the model named it', () => {
+  // The 0.79.0 failure, as a test. The field LOOKS filled — it shows the model's "Hoodie" —
+  // and its confidence is 0.97, so nothing else here would have stopped it.
+  const view = draftView(readyWith({ catalog: undefined }));
+  const f = field(view, 'category');
+  assert.equal(f.value, 'Hoodie', 'the word is still shown — that is what makes it dangerous');
+  assert.equal(f.id, null);
+  assert.equal(f.state, FIELD_MISSING);
+  assert.equal(view.canPublish, false);
+});
+
+test('draftView: confirming an unresolved category does not release it', () => {
+  const view = draftView(readyWith({ catalog: undefined }, { confirmations: { condition: true, category: true } }));
+  assert.equal(state(view, 'category'), FIELD_MISSING, '"Passt" cannot conjure a catalog_id');
+  assert.equal(view.canPublish, false);
+});
+
+test('draftView: typing a category does not release it either', () => {
+  // An override counts as a decision for every other field. Here it is just a word.
+  const view = draftView(readyWith({ catalog: undefined }, { overrides: { category: 'Kapuzenpulli' } }));
+  assert.equal(state(view, 'category'), FIELD_MISSING);
+});
+
+test('draftView: the blocker names the word Vinted did not recognise', () => {
+  const view = draftView(readyWith({ catalog: undefined }));
+  assert.match(field(view, 'category').note, /Hoodie/);
+  assert.ok(view.blockers.some(b => /Hoodie/.test(b)), view.blockers.join(' | '));
+});
+
+test('draftView: with candidates the advice is to pick, without them to retype', () => {
+  const withList = draftView(readyWith({
+    catalog: { label: 'Hoodie', confidence: 0, candidates: [{ id: 1, label: 'Herren > Hoodies' }, { id: 2, label: 'Damen > Hoodies' }] }
+  }));
+  assert.match(field(withList, 'category').note, /aus der Liste/);
+  assert.match(field(draftView(readyWith({ catalog: undefined })), 'category').note, /eintippen/);
+});
+
+test('draftView: a resolved category is ok once confirmed, id and all', () => {
+  const view = draftView(readyWith(
+    { catalog: { id: 1806, label: 'Hoodies & Sweaters', confidence: 0.5, candidates: [] } },
+    { confirmations: { condition: true, category: true } }
+  ));
+  assert.equal(state(view, 'category'), FIELD_OK);
+  assert.equal(field(view, 'category').id, 1806);
+  assert.equal(view.canPublish, true);
 });
 
 test('draftView: a resolved id and label win over the raw string from the model', () => {
@@ -140,7 +235,7 @@ test('draftView: a value the user typed counts as confirmed', () => {
 test('draftView: the pre-set condition counts as unconfirmed until it is confirmed', () => {
   const view = draftView(ready({ confirmations: {} }));
   const f = field(view, 'condition');
-  assert.equal(f.value, 2, 'the value is Vinted\'s status id, not our symbolic default');
+  assert.equal(f.id, 2, 'the id is Vinted\'s status id, not our symbolic default');
   assert.equal(f.state, FIELD_NEEDS_CONFIRMATION);
   assert.equal(view.canPublish, false, 'a pre-selection must never publish itself');
   assert.ok(view.blockers.some(b => /Zustand/.test(b)));
@@ -148,8 +243,48 @@ test('draftView: the pre-set condition counts as unconfirmed until it is confirm
 
 test('draftView: even a condition the user picked has to be confirmed', () => {
   const view = draftView(ready({ condition: 6, confirmations: {} }));
-  assert.equal(field(view, 'condition').value, 6);
+  assert.equal(field(view, 'condition').id, 6);
   assert.equal(field(view, 'condition').state, FIELD_NEEDS_CONFIRMATION);
+});
+
+// ---------- the condition, as a word ----------
+//
+// It used to be the one field whose `value` was an id. The studio prints
+// `Zustand=${f.value}` like every other field, so the log line read "Zustand=2" — a number
+// nobody can check against the article in their hands.
+
+test('draftView: the condition shows Vinteds word, and carries the id beside it', () => {
+  const f = field(draftView(ready()), 'condition');
+  assert.equal(f.value, 'Sehr gut');
+  assert.equal(f.id, 2);
+});
+
+test('draftView: without Vinteds list the condition falls back to the bare id', () => {
+  // The list arrives with the lookup; until then the field must not read as empty, or a
+  // draft that HAS a condition would block on a missing one.
+  const f = field(draftView(ready({ conditions: [] })), 'condition');
+  assert.equal(f.value, '2');
+  assert.equal(f.id, 2);
+  assert.equal(f.state, FIELD_OK, 'confirmed stays confirmed while the list is missing');
+});
+
+test('draftView: an id Vinted does not know still shows, rather than vanishing', () => {
+  const f = field(draftView(ready({ condition: 99 })), 'condition');
+  assert.equal(f.value, '99');
+  assert.equal(f.id, 99);
+});
+
+test('draftView: no condition means no id either', () => {
+  const f = field(draftView(ready({ condition: null, confirmations: {} })), 'condition');
+  assert.equal(f.value, null);
+  assert.equal(f.id, null);
+});
+
+test('draftView: only the condition brings its own id — the others come from resolutions', () => {
+  const view = draftView(ready({ resolved: {} }));
+  for (const f of view.fields.filter(f => f.key !== 'condition')) {
+    assert.equal(f.id, null, `${f.key} invented an id`);
+  }
 });
 
 // ---------- price ----------
@@ -216,7 +351,7 @@ test('draftView: confirming a price under the floor releases it', () => {
 // ---------- canPublish ----------
 
 test('draftView: canPublish stays false while anything is unconfirmed, even with nothing missing', () => {
-  const view = draftView(ready({ analysis: analysis({ type_confidence: 0.3 }) }));
+  const view = draftView(readyWith({ catalog: { id: 1806, label: 'Hoodie', confidence: 0.3, candidates: [] } }));
   assert.ok(view.fields.every(f => f.state !== FIELD_MISSING), 'nothing should be missing here');
   assert.equal(view.canPublish, false);
 });
@@ -244,6 +379,37 @@ test('draftView: survives being called with no arguments at all', () => {
   assert.ok(Array.isArray(view.photos));
 });
 
+// ---------- title: the name, not the filing label ----------
+
+test('draftView: the title uses the article\'s name, not Vinted\'s filing label', () => {
+  // Measured on a real dry run: the category resolved to leaf 1806 "Einfarbige T-Shirts"
+  // and the title became "Superdry Einfarbige T-Shirts M Blau". Resolving the category
+  // made the title worse — plural, with a taxonomy qualifier nobody writes in a headline.
+  const view = draftView(readyWith(
+    { catalog: { id: 1806, label: 'Einfarbige T-Shirts', confidence: 1, candidates: [] } },
+    { analysis: analysis({ brand: 'Superdry', type: 'T-Shirt', colors: ['Blau'] }) }
+  ));
+  assert.equal(view.title, 'Superdry T-Shirt M Blau');
+  assert.equal(field(view, 'category').value, 'Einfarbige T-Shirts', 'the FIELD keeps Vinteds wording');
+});
+
+test('draftView: a word the user typed beats both', () => {
+  const view = draftView(readyWith(
+    { catalog: { id: 1806, label: 'Einfarbige T-Shirts', confidence: 1, candidates: [] } },
+    { analysis: analysis({ type: 'T-Shirt' }), overrides: { category: 'Longsleeve' } }
+  ));
+  assert.ok(view.title.includes('Longsleeve'), view.title);
+});
+
+test('draftView: without a name from the model the leaf label stands in', () => {
+  // Better a clumsy title than a title with a hole in it.
+  const view = draftView(readyWith(
+    { catalog: { id: 1806, label: 'Einfarbige T-Shirts', confidence: 1, candidates: [] } },
+    { analysis: analysis({ type: null, type_confidence: 0 }), confirmations: { condition: true, category: true } }
+  ));
+  assert.ok(view.title.includes('Einfarbige T-Shirts'), view.title);
+});
+
 // ---------- title ----------
 
 test('draftView: the title is buildTitle with the profile from the category group', () => {
@@ -256,9 +422,10 @@ test('draftView: the title is buildTitle with the profile from the category grou
 });
 
 test('draftView: another category group selects another profile', () => {
-  const view = draftView(ready({
-    analysis: analysis({ category_group: 'accessories', type: 'Umhängetasche', size_label: null, size_source: 'none' })
-  }));
+  const view = draftView(readyWith(
+    { catalog: { id: 3025, label: 'Umhängetasche', confidence: 1, candidates: [] } },
+    { analysis: analysis({ category_group: 'accessories', type: 'Umhängetasche', size_label: null, size_source: 'none' }) }
+  ));
   assert.equal(view.profile, 'accessories');
   assert.ok(!view.title.includes('M '), view.title);
   assert.ok(view.title.includes('Umhängetasche'));
@@ -471,8 +638,149 @@ test('draftView: every field carries a label the studio can render without decid
 
 test('draftView: without a condition the field is missing, not silently defaulted', () => {
   // The settings hold a preference, not a status_id. Turning one into the other is
-  // lookup.preselectCondition's job, and only once Vinted's list is known.
+  // condition.chooseCondition's job, and only once Vinted's list is known.
   const view = draftView(ready({ condition: null, confirmations: {} }));
   assert.equal(field(view, 'condition').value, null);
   assert.equal(state(view, 'condition'), FIELD_MISSING);
+});
+
+// ---------- where the condition came from ----------
+
+test('draftView: a condition the recognition proposed says so, and says why', () => {
+  const view = draftView(ready({
+    condition: 3, confirmations: {},
+    conditionMeta: { source: 'ai', evidence: 'Pilling an den Ärmeln' }
+  }));
+  assert.match(field(view, 'condition').hint, /Erkennung/);
+  assert.match(field(view, 'condition').hint, /Pilling an den Ärmeln/);
+});
+
+test('draftView: a proposal without evidence still asks to be checked', () => {
+  const view = draftView(ready({ condition: 3, confirmations: {}, conditionMeta: { source: 'ai' } }));
+  assert.match(field(view, 'condition').hint, /prüfen/);
+});
+
+test('draftView: the default announces itself as one', () => {
+  // The whole point: an unexplained "Sehr gut" invites a click, a named source invites a look.
+  const view = draftView(ready({ condition: 2, confirmations: {}, conditionMeta: { source: 'default' } }));
+  assert.match(field(view, 'condition').hint, /Voreinstellung/);
+});
+
+test('draftView: a condition the user picked needs no explanation', () => {
+  const view = draftView(ready({ condition: 2, conditionMeta: { source: 'user' } }));
+  assert.equal(field(view, 'condition').hint, null);
+  assert.equal(draftView(ready({ condition: 2 })).fields.find(f => f.key === 'condition').hint, null);
+});
+
+test('draftView: a hint neither blocks nor turns up among the blockers', () => {
+  const view = draftView(ready({
+    condition: 3, confirmations: { condition: true },
+    conditionMeta: { source: 'ai', evidence: 'Pilling an den Ärmeln' }
+  }));
+  assert.equal(state(view, 'condition'), FIELD_OK, 'a hint is not a note');
+  assert.ok(!view.blockers.some(b => /Pilling/.test(b)), view.blockers.join(' | '));
+});
+
+test('draftView: only the condition carries a hint — no other field invents one', () => {
+  const view = draftView(ready({ conditionMeta: { source: 'ai', evidence: 'x' } }));
+  for (const f of view.fields.filter(f => f.key !== 'condition')) {
+    assert.equal(f.hint, null, f.key);
+  }
+});
+
+test('draftView: a proposed condition still has to be confirmed', () => {
+  // §7.5 does not care where the value came from. The model having looked at photos is a
+  // better cursor position, not a decision.
+  const view = draftView(ready({ condition: 3, confirmations: {}, conditionMeta: { source: 'ai', evidence: 'Pilling' } }));
+  assert.equal(state(view, 'condition'), FIELD_NEEDS_CONFIRMATION);
+  assert.equal(view.canPublish, false);
+});
+
+// ---------- the description contradicting the fields ----------
+
+test('draftView: a corrected colour that the sentence still asserts blocks', () => {
+  // Verbatim from a dry run: Vinteds cross-check said Türkis, the user took it, and the
+  // listing came out as "Superdry T-Shirt M Türkis" over "Blaues T-Shirt von Superdry…".
+  // Splitting sentence from facts only protects the FACTS; a value inside the prose is
+  // beyond re-derivation, so it has to be caught instead of quietly shipped.
+  const view = draftView(readyWith(
+    { color: { id: 17, label: 'Türkis', confidence: 1, candidates: [] } },
+    {
+      analysis: analysis({
+        colors: ['Blau'],
+        description_sentence: 'Blaues T-Shirt von Superdry Originals mit kleiner Brusttasche.'
+      })
+    }
+  ));
+  assert.equal(field(view, 'color').value, 'Türkis');
+  assert.equal(view.descriptionState, FIELD_NEEDS_CONFIRMATION);
+  assert.ok(view.blockers.some(b => /Blau/.test(b)), view.blockers.join(' | '));
+  assert.equal(view.canPublish, false);
+});
+
+test('draftView: "Blau" is found inside "Blaues" — a word ending must not hide it', () => {
+  const view = draftView(readyWith(
+    { color: { id: 17, label: 'Türkis', confidence: 1, candidates: [] } },
+    { analysis: analysis({ colors: ['Blau'], description_sentence: 'Ein blaues Shirt.' }) }
+  ));
+  assert.equal(view.descriptionState, FIELD_NEEDS_CONFIRMATION);
+});
+
+test('draftView: an uncorrected field is no contradiction, however often it is named', () => {
+  const view = draftView(ready({
+    analysis: analysis({ description_sentence: 'Ein schwarzer Hoodie von Nike, schlicht.' })
+  }));
+  assert.equal(view.descriptionState, FIELD_OK, 'Schwarz and Nike are still the values');
+  assert.equal(view.canPublish, true);
+});
+
+test('draftView: Vinteds filing label is not a contradiction — that is its normal state', () => {
+  // The category field holds "Einfarbige T-Shirts" while the article is called a T-Shirt.
+  // Flagging that would fire on every single resolved draft.
+  const view = draftView(readyWith(
+    { catalog: { id: 1806, label: 'Einfarbige T-Shirts', confidence: 1, candidates: [] } },
+    { analysis: analysis({ type: 'T-Shirt', description_sentence: 'Ein schlichtes T-Shirt.' }) }
+  ));
+  assert.equal(view.descriptionState, FIELD_OK);
+});
+
+test('draftView: a category the user actually retyped IS a contradiction', () => {
+  const view = draftView(readyWith(
+    { catalog: { id: 1806, label: 'Einfarbige T-Shirts', confidence: 1, candidates: [] } },
+    {
+      analysis: analysis({ type: 'Hoodie', description_sentence: 'Ein schlichter Hoodie.' }),
+      overrides: { category: 'Longsleeve' }
+    }
+  ));
+  assert.equal(view.descriptionState, FIELD_NEEDS_CONFIRMATION);
+  assert.ok(view.blockers.some(b => /Hoodie/.test(b)), view.blockers.join(' | '));
+});
+
+test('draftView: a text the user wrote themselves is theirs, contradictions included', () => {
+  const view = draftView(readyWith(
+    { color: { id: 17, label: 'Türkis', confidence: 1, candidates: [] } },
+    {
+      analysis: analysis({ colors: ['Blau'], description_sentence: 'Blaues T-Shirt.' }),
+      overrides: { description: 'Blaues T-Shirt, wie ich finde.' }
+    }
+  ));
+  assert.equal(view.descriptionState, FIELD_OK, 'they took responsibility for the text');
+  assert.equal(view.canPublish, true);
+});
+
+test('draftView: a value under three characters never triggers it', () => {
+  // A size "M" or a colour "Ei" would match half the alphabet.
+  const view = draftView(readyWith(
+    { size: { id: 209, label: 'L', confidence: 1, candidates: [] } },
+    { analysis: analysis({ size_label: 'M', description_sentence: 'Mit Muster am Saum.' }) }
+  ));
+  assert.equal(view.descriptionState, FIELD_OK);
+});
+
+test('draftView: an empty description is still MISSING, not a contradiction', () => {
+  const view = draftView(ready({
+    analysis: analysis({ description_sentence: '', description_facts: [] })
+  }));
+  assert.equal(view.descriptionState, FIELD_MISSING);
+  assert.ok(view.blockers.some(b => /fehlt/.test(b)));
 });

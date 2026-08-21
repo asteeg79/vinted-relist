@@ -202,22 +202,155 @@ Antworten sind gekürzt auf die Felder, die wir brauchen; `code: 0` heißt über
 |---|---|---|---|
 | Kategoriebaum, vollständig | `GET` | `/api/v2/item_upload/catalogs` | `{catalogs, code}` — 486 KB, 2910 Knoten, 8 Wurzeln |
 | Kategorie suchen | `GET` | `/api/v2/item_upload/catalogs/search?keyword=…` | `{catalog_ids: […], code}` — **nur IDs**, Namen aus dem Baum |
-| Pflichtfelder je Kategorie | `GET` | `/api/v2/offline_verification/criteria/{catalog_id}` | `{required_field_codes: ["brand","price"], code}` |
-| Attribute je Kategorie | `POST` | `/api/v2/item_upload/attributes` | `{attributes: [{code, value_ids, value, configuration}], code}` |
+| ~~Pflichtfelder je Kategorie~~ | `GET` | `/api/v2/offline_verification/criteria/{catalog_id}` | `{required_field_codes: ["brand","price"], code}` — **konstant**, siehe Nachtrag 2026-08-21 |
+| Attribute je Kategorie | `POST` | `/api/v2/item_upload/attributes` | Körper `{catalog_id, attributes: []}` → `{attributes: [{code, value_ids, value, configuration}], code}` |
+| **Größen je Kategorie** | `GET` | `/api/v2/item_upload/size_groups?catalog_ids[]={id}` | `{size_groups: [{id, caption, description, size_ids, sizes: [{id, title, is_default, is_other, order}]}], code}` |
+| **Zustände je Kategorie** | `GET` | `/api/v2/item_upload/conditions?catalog_id={id}` | `{conditions: [{id, title, explanation}], code}` |
+| Zustände, allgemein | `GET` | `/api/v2/statuses` | `{statuses: [{id, title, description, explanation}], code}` |
 | Marken je Kategorie | `GET` | `/api/v2/item_upload/brands?category_id={id}` | `{brands: [{id, title, requires_authenticity_check, is_luxury, is_hvf, has_children}], disable_custom_brands, code}` — 50 beliebte |
 | Farben | `GET` | `/api/v2/item_upload/colors` | `{colors: [{id, title, hex, order, code}], code}` — 29 Stück |
 | **Preisvorschlag** | `GET` | `/api/v2/item_price_suggestions?catalog_id=&brand_id=&status_id=` | siehe unten |
-| Paketgrößen je Kategorie | `GET` | `/shipping-estimation/external/catalogs/{catalog_id}/package_sizes` | `{package_sizes, parcel_measurements, …}` |
-| Paketgröße vorschlagen | `POST` | `/shipping-estimation/external/package_sizes/suggestion` | `{package_size_id}` |
+| Paketgrößen je Kategorie | `GET` | **`api.`**`vinted.<tld>/shipping-estimation/external/catalogs/{catalog_id}/package_sizes` | `{package_sizes: [{id, code: SMALL\|MEDIUM\|LARGE, title, …}]}` |
+| Paketgröße vorschlagen | `POST` | **`api.`**`vinted.<tld>/shipping-estimation/external/package_sizes/suggestion` | `{package_size_id}` — anderer Host, **ohne** Auth-Header, siehe Nachtrag 2026-08-21 |
 | Kategorie aus Fotos | `POST` | `/api/v2/item_upload/suggestions/categories` | `{categories: […], prefill_categories: […], legacy_first_category, code}` |
 | Marke/Farbe aus Fotos | `POST` | `/api/v2/item_upload/suggestions/attributes` | `{brands, colors, sizes, isbn, dynamic_attributes, code}` |
 
 Ein Kategorie-Knoten ist `{id, title, restricted_to_status_id, badge, photo, path, catalogs[]}`.
-Blätter haben `catalogs: []`. Der Baum trägt **keine** Größengruppe — die kommt aus
-`POST /api/v2/item_upload/attributes` mit `{attributes:[{code:"category", value:[<id>]}]}`;
-für Kleidung antwortet er mit sechs Deskriptoren (Marke, Größe, Zustand, Farbe, Material,
-Maße). Das ist die Reihenfolge aus §6.2 des Konzepts, von Vinted selbst erzwungen: erst
-Kategorie, dann die dafür gültige Größenmenge.
+Blätter haben `catalogs: []`. Der Baum trägt **keine** Größengruppe — die hängt an der
+Kategorie und wird einzeln geholt. Das ist die Reihenfolge aus §6.2 des Konzepts, von
+Vinted selbst erzwungen: erst Kategorie, dann die dafür gültige Größenmenge.
+
+**Nachtrag 2026-08-21 — die Sendungsgröße liegt woanders, und die Pflichtfelder sind keine.**
+
+Zwei Löcher in der Payload, beide gemessen statt vermutet — im laufenden `/items/new`, mit
+dem Netzwerkmitschnitt daneben.
+
+**`package_size_id: null`.** Das Formular verlangt die Sendungsgröße („Bitte wähle eine
+Sendungsgröße aus") und markiert eine als „Empfohlen"; wählt man eine Kategorie, ruft die
+SPA dafür `POST /shipping-estimation/external/package_sizes/suggestion` auf. Der gebaute
+`taxonomy.packageSize` hätte diesen Aufruf nie hinbekommen, aus drei Gründen:
+
+1. **Anderer Host.** `www.vinted.de/shipping-estimation/…` ist die 404-HTML-Seite,
+   `api.vinted.de/shipping-estimation/…` antwortet `{"package_size_id":1}`.
+2. **Keine Auth-Header.** Mit `X-CSRF-Token`/`X-Requested-With` scheitert schon der
+   CORS-Preflight („Failed to fetch"); ohne sie kommt 200. Die Anmeldung sind die Cookies —
+   ohne `credentials: 'include'` ist die Antwort 403.
+3. **Falsche Schicht.** `upload_session_id` ist Pflicht (sonst 422), existiert also erst
+   nach dem Foto-Upload. Der Aufruf gehört in `draft.js`, nicht in die Vorbereitung.
+
+Gemessene Antworten: T-Shirt → 1 (`SMALL`), Buch → 2 (`MEDIUM`), Schuhe → 2. Eine
+unbekannte Kategorie wird mit `{"package_size_id": null}` und Status 200 beantwortet — null
+ist eine Antwort, kein Fehler, und wird als `null` weitergereicht.
+
+**`item_attributes: []`.** `taxonomy.requiredFields` sah nach der Pflichtfeldliste der
+Kategorie aus. Sie ist keine: `/api/v2/offline_verification/criteria/{id}` antwortet für
+elf geprüfte Kategorien — T-Shirts, Jacken, Schuhe, Sachbücher, Belletristik, Kinderbücher,
+Spielzeug — immer `["brand","price"]`, während das Upload-Formular für Belletristik
+überhaupt kein Markenfeld zeigt (dort stehen Kategorie, ISBN, Zustand, Preis, Versand). Als
+Sperre hätte sie genau die Drafts angehalten, die in Ordnung sind. Sie ist deshalb entfernt.
+
+Was eine Kategorie wirklich führt, beantwortet `POST /api/v2/item_upload/attributes`, und
+zwar nur mit dem Körper `{catalog_id, attributes: []}` — `{catalog_id}` allein und die
+Varianten mit `attributes: [{code: 'category', …}]` sind 422. Für jede geprüfte Kategorie
+ist die Liste leer; `item_attributes: []` ist also für den heutigen Bestand richtig. Der
+Aufruf steht trotzdem in der Pipeline, **vor** dem ersten Upload: meldet Vinted dort etwas,
+das keine eigene Spalte in der Payload hat, hält der Draft an und nennt die Codes. Geraten
+wird nichts (ADR-0005) — im Relist-Pfad wird der Beutel aus dem Vorgänger-Artikel
+zurückgespielt, hier gibt es keinen.
+
+**Nachtrag 2026-08-21 — `value` ist das Wort, `id` ist die ID (auch beim Zustand).**
+
+Die Zusammenfassung eines sauberen Trockenlaufs las sich
+`Marke=Superdry, Kategorie=Einfarbige T-Shirts, Größe=M, Farbe=Türkis, Zustand=2`. Der
+Zustand war das einzige Feld, dessen `value` eine ID war statt eines Wortes — und damit das
+einzige, das man am Artikel in der Hand nicht nachprüfen kann. Für ein Feld, das aus genau
+diesem Grund immer bestätigt werden muss (§7.5), ist das die falsche Anzeige.
+
+`draftView` gibt für den Zustand jetzt Vinteds eigenen Titel als `value` und die
+`status_id` als `id` — dieselbe Form wie bei Marke, Kategorie, Größe und Farbe. Der Titel
+kommt aus der geholten Liste (`conditionTitleFor`), nicht aus unserem Vokabular: im
+Auswahlfeld steht Vinteds Wort, auf dem Bildschirm soll dasselbe stehen. Ist die Liste noch
+nicht da, bleibt die nackte ID stehen — ein Zustand, der als leer gilt, würde sonst blocken.
+
+Zwei Stellen lasen bisher `field.value` als ID und lesen jetzt `field.id`: die Payload
+(`draft.js` → `statusId`) und das Auswahlfeld im Studio.
+
+**Nachtrag 2026-08-20 — die Kategorie braucht eine ID, kein Wort.**
+
+Ein Trockenlauf scheiterte mit `Pflichtfeld fehlt: catalog_id` — und zwar erst beim Bauen
+der Payload, also nachdem das Schreib-Schloss genommen und drei Fotos hochgeladen waren.
+Ursache: das Kategoriefeld fällt auf das rohe Wort des Modells zurück („Hoodie"), sah
+damit gefüllt aus, stand auf `needs_confirmation`, und ein Klick auf „Passt" gab das
+Veröffentlichen frei. Bestätigen kann aber keine ID herbeischaffen.
+
+Drei Änderungen, in dieser Reihenfolge:
+
+1. **`draft-view.js`** kennt `NEEDS_ID` — bisher nur die Kategorie, weil nur sie in
+   `buildNewItemPayload` zum Wurf führt (Marke und Größe sind in der Payload nullbar). Ein
+   Feld darin ohne aufgelöste ID ist `missing`, und zwar **vor** der Bestätigungsprüfung.
+   Damit blockt der Draft im Studio, statt nach dem Upload zu scheitern.
+2. **`lookup.js`** ruft `taxonomy.searchCatalogs` als Rückfallebene, wenn die exakte
+   Titelgleichheit nichts findet. Ein Treffer wird übernommen, aber mit Konfidenz 0.5 —
+   gefunden, nicht geprüft. Mehrere Treffer sind eine Auswahl, keine Rangliste.
+3. Das getippte Kategoriefeld wirkt: `lookupDraft({ labels: { category } })`. Vorher war
+   es dekorativ — Text ändern, sonst nichts, und ein unauflösbarer Draft hatte gar keinen
+   Ausweg.
+
+**Nachtrag 2026-08-20 — die Erkennung bekommt das ungeschnittene Foto.**
+
+Bis 0.78.0 lief die Reihenfolge zuschneiden → erkennen. Der Zuschnitt ist eine Heuristik,
+die einfarbigen Hintergrund abschält und alles andere behält; einen Begriff davon, was der
+Artikel *ist*, hat sie nicht. An einem echten Foto behielt sie 26 % der Fläche, und das
+Größenetikett lag in den weggeworfenen 74 %. Die Erkennung meldete daraufhin korrekt
+`size_label: null` — sie hatte nichts mehr zu lesen.
+
+Seit 0.79.0 gilt: **das Modell sieht das Foto, wie es aufgenommen wurde.** Der Zuschnitt
+folgt aus seiner Antwort, nicht umgekehrt.
+
+1. Aufnahme → `prepare()` erzeugt zwei Ausgaben aus **einem** Bitmap: die Inseratsdatei
+   (heuristischer 4:5-Zuschnitt, 1080×1350, sofort als Vorschau) und die Modellkopie
+   (**ganzes Bild**, bis 1568 Kantenlänge, q0.92).
+2. Ein Erkennungs-Call über alle Modellkopien. Das Modell liefert je Foto `article_box`
+   (normiert 0–1) und `distractions`.
+3. Zweiter Durchgang: betroffene Fotos werden **aus der Originaldatei** neu gezeichnet,
+   gerahmt nach `article_box`. Zwei Zuschnitte hintereinander würden genau die Pixel
+   kosten, um die es geht.
+
+`crop.modelBoxVerdict` entscheidet, ob eine Box benutzbar ist, und sagt warum nicht:
+`malformed`, `outside`, `too_small`, `in_padding` — oder `full_frame`, was **kein**
+Einwand ist, sondern „der Artikel füllt das Bild ohnehin". Die Garantie aus §5.2 bleibt
+unberührt: die Box läuft durch dasselbe `chooseFrame` wie vorher, und ein Crop-Rahmen, der
+ins Objekt schneiden würde, wird weiterhin zu einem Pad.
+
+**Nachtrag 2026-08-20 — Größen und Zustände, korrigiert.**
+
+Der erste Durchgang hatte beide Listen aus der `attributes`-Antwort gelesen. Für die Größen
+war das eine ungeprüfte Annahme, für die Zustände eine aus dem Verhalten der Oberfläche
+abgeleitete Vermutung. Beides ist falsch, und beides fiel deshalb gleichzeitig aus: kein
+Zustand war auswählbar, keine Größe wurde je aufgelöst. Nachgemessen:
+
+* **Größen** kommen aus `GET /api/v2/item_upload/size_groups`, und der Parameter heißt
+  **`catalog_ids[]`** — Plural, mit Klammern. Mit dem naheliegenden `catalog_id` antwortet
+  Vinted `200 {"size_groups": []}`: ein Erfolg mit leerer Liste. Genau deshalb ist nichts
+  aufgefallen — es gab keinen Fehler, nur nie eine Größe. Eine Kategorie kann mehrere
+  Gruppen zurückgeben (ein Schuh hat EU und UK); die Titel sind je nach Gruppe „M" oder
+  „M / 38 / 10", was das `splitOn: '/'` in `resolve.js` abfängt.
+* **Zustände** kommen aus `GET /api/v2/item_upload/conditions?catalog_id={id}`, mit
+  `explanation` — Vinteds eigener Definition der Stufe. Fünf Kategorien quer durch den
+  Baum (Herren-Shirt, Damen-Shirt, Schuhe, 1187, 2312) gaben dieselben fünf zurück:
+
+  | id | Titel | |
+  |---:|---|---|
+  | 6 | Neu, mit Etikett | mit Etikett oder original verpackt |
+  | 1 | Neu | ohne Etikett oder Originalverpackung |
+  | 2 | Sehr gut | nur selten benutzt |
+  | 3 | Gut | benutzt, mögliche Gebrauchsspuren |
+  | 4 | Zufriedenstellend | oft benutzt, Mängel |
+
+  **„Sehr gut" ist die 2, nicht die 3.** `/api/v2/statuses` liefert zusätzlich
+  `7 = Nicht voll funktionsfähig`, das beim Einstellen **nicht** angeboten wird — der
+  Grund, warum trotz gemessener Zahlen keine Tabelle im Code steht (ADR-0005) und warum
+  `lookup.js` einen Zustand verwirft, den die aktuelle Liste nicht enthält.
 
 **Preisvorschlag — der wichtigste Befund.**
 

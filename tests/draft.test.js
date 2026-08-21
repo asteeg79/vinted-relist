@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { publishDraft } from '../lib/draft.js';
 import { makeFakeDraftPort, READY_DRAFT, PHOTOS } from './helpers/fake-draft-port.js';
 import { missingMembers } from '../lib/draft-port.js';
+import { describeDraftOutcome } from '../lib/gates.js';
+import { conflictedFields } from '../lib/draft-view.js';
 import { liveDraftPort } from '../lib/live-draft-port.js';
 import { resetWriteLock, currentWriter } from '../lib/write-lock.js';
 import { ApiError, BusyError, ValidationError } from '../lib/errors.js';
@@ -139,6 +141,84 @@ test('the order is upload → suggestions → create, never the other way round'
 });
 
 // ================================================================================
+// What the category demands — asked before the first upload.
+// ================================================================================
+
+test('a category that demands an attribute we cannot fill stops the draft', async () => {
+  // The relist path met this from the other side on 2026-08-12: `language_book: Wähle eine
+  // Sprache`, thrown by createItem, with every photo already uploaded.
+  const port = makeFakeDraftPort({
+    settings: { draftCreateEnabled: true },
+    categoryAttributes: () => [{ code: 'language_book', value_ids: [] }]
+  });
+  await assert.rejects(() => publishDraft(request(), port), /language_book/);
+  assert.equal(port.called('uploadPhoto'), false, 'the whole point is that it costs no upload');
+  assert.equal(port.called('createItem'), false);
+});
+
+test('the attributes are asked for the resolved category, and the answer is logged', async () => {
+  const port = makeFakeDraftPort();
+  await publishDraft(request(), port);
+  assert.deepEqual(port.argsFor('categoryAttributes')[0][2], 196);
+  const logged = port.calls.find(c => c.name === 'log' && c.args[0] === 'category_attributes');
+  assert.deepEqual(logged.args[1], { catalogId: 196, codes: [] });
+});
+
+test('a failing attribute call does not block a reviewed draft', async () => {
+  // Same rule as the cross-check: this is a safety net. If it falls out, what held before
+  // still holds — createItem decides.
+  const port = makeFakeDraftPort({
+    settings: { draftCreateEnabled: true },
+    categoryAttributes: () => { throw new ApiError(500, 'boom'); }
+  });
+  const result = await publishDraft(request(), port);
+  assert.equal(result.newId, 555001);
+  assert.ok(port.calls.some(c => c.name === 'log' && c.args[0] === 'category_attributes_failed'));
+});
+
+// ================================================================================
+// The parcel size — Vinted's own recommendation instead of null.
+// ================================================================================
+
+test('the parcel size comes from Vinted and lands in the payload', async () => {
+  const port = makeFakeDraftPort();
+  const result = await publishDraft(request(), port);
+  assert.equal(result.payload.item.package_size_id, 2);
+
+  const [domain, opts] = port.argsFor('suggestPackageSize')[0];
+  assert.equal(domain, 'www.vinted.de');
+  assert.equal(opts.catalogId, 196);
+  assert.equal(opts.brandId, 53);
+  assert.equal(opts.sizeId, 105);
+  assert.equal(opts.uploadSessionId, 'sess-fixed', 'the call does not exist without one');
+  assert.equal(opts.price, 18);
+  assert.ok(opts.title.includes('Nike'), 'the suggestion reads the finished title');
+});
+
+test('the parcel size is asked only once the upload session exists', async () => {
+  const port = makeFakeDraftPort();
+  await publishDraft(request(), port);
+  assert.ok(port.names.indexOf('uploadPhoto') < port.names.indexOf('suggestPackageSize'));
+});
+
+test('no recommendation, no parcel size — and never a guessed one', async () => {
+  const port = makeFakeDraftPort({ suggestPackageSize: () => null });
+  const result = await publishDraft(request(), port);
+  assert.equal(result.payload.item.package_size_id, null);
+  assert.ok(port.calls.some(c => c.name === 'log' && c.args[0] === 'package_size'));
+});
+
+test('a failing parcel-size call costs the recommendation, not the listing', async () => {
+  const port = makeFakeDraftPort({
+    settings: { draftCreateEnabled: true },
+    suggestPackageSize: () => { throw new ApiError(404, 'wrong host'); }
+  });
+  const result = await publishDraft(request(), port);
+  assert.equal(result.newId, 555001);
+  assert.ok(port.calls.some(c => c.name === 'log' && c.args[0] === 'package_size_failed'));
+});
+
+// ================================================================================
 // The language check, before anything is uploaded.
 // ================================================================================
 
@@ -176,9 +256,63 @@ test('Vinted disagreeing stops the create — after the upload, deliberately', a
     suggestCategories: () => [1807] // we resolved 196
   });
 
-  await assert.rejects(() => publishDraft(request(), port), /widerspricht/);
+  const result = await publishDraft(request(), port);
+  assert.equal(result.conflict, true);
   assert.equal(port.called('uploadPhoto'), true, 'the photos had to be up to ask at all');
   assert.equal(port.called('createItem'), false, 'and that is the point');
+});
+
+test('a disagreement hands the two answers BACK, it does not throw them away', async () => {
+  // The dead end this replaced: the conflict was a ValidationError, so Vinteds candidates
+  // died with it. The studio showed "Vinted widerspricht", nothing became selectable, and
+  // pressing publish again re-uploaded three photos into the same wall.
+  const port = makeFakeDraftPort({
+    settings: { draftCreateEnabled: true },
+    suggestCategories: () => [1807]
+  });
+
+  const result = await publishDraft(request(), port);
+  assert.equal(result.resolved.catalog.agreed, false);
+  assert.equal(result.resolved.catalog.id, null, 'the field is emptied, not quietly kept');
+  assert.ok(result.resolved.catalog.candidates.length >= 2, 'ours and theirs, both on offer');
+  assert.ok(result.blockers.length, 'and the studio is told what is open');
+});
+
+test('a conflict is reported as a decision to make, not as a failure', async () => {
+  const message = describeDraftOutcome({ conflict: true, blockers: ['Farbe bestätigen'] });
+  assert.equal(message.kind, 'warning', 'two recognisers disagreeing is the feature working');
+  assert.match(message.text, /Farbe bestätigen/);
+  assert.match(message.text, /neu hochgeladen/, 'the re-upload is a real cost and is named');
+});
+
+test('conflictedFields names the fields the studio has to reopen', () => {
+  const resolved = {
+    catalog: { id: 196, agreed: true },
+    color: { id: null, agreed: false, candidates: [{ id: 9 }, { id: 10 }] },
+    brand: { id: 53, agreed: true },
+    size: { id: 105 }
+  };
+  assert.deepEqual(conflictedFields(resolved), ['color'], 'by FIELD key, not by resolution key');
+  assert.deepEqual(conflictedFields({}), []);
+  assert.deepEqual(conflictedFields(), []);
+});
+
+test('uploads without an image id say so instead of going quiet', async () => {
+  // What a dry run looked like in 0.79.0: three `publish_photo` lines and then nothing at
+  // all — the cross-check returned early because the upload answers carried no
+  // `high_resolution.id`, and it returned SILENTLY. A log that stops mid-run reads like a
+  // hang, and the next hour goes into looking for one.
+  let photoId = 0;
+  const port = makeFakeDraftPort({
+    settings: { draftCreateEnabled: true },
+    uploadPhoto: () => ({ id: ++photoId, temp_uuid: 'u-1' }) // no high_resolution
+  });
+
+  const result = await publishDraft(request(), port);
+  assert.equal(result.newId, 555001, 'a missing image id is not a reason to fail');
+  assert.equal(port.called('suggestCategories'), false, 'there was nothing to ask about');
+  const events = port.argsFor('log').map(a => a[0]);
+  assert.ok(events.includes('publish_suggestions_skipped'), events.join(', '));
 });
 
 test('a failing suggestion endpoint does not block a reviewed draft', async () => {

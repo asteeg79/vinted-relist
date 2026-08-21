@@ -3,9 +3,8 @@ import assert from 'node:assert/strict';
 import { installChromeMock } from './helpers/chrome-mock.js';
 import {
   TAXONOMY_KEY, TTL,
-  flattenCatalogs, findCatalog, optionsFromAttributes, sizesFromAttributes,
-  conditionsFromAttributes, parsePriceSuggestion, isFresh,
-  lookupCachedCatalogs, createTaxonomy
+  flattenCatalogs, findCatalog, sizesFromGroups, conditionsFromBody,
+  parsePriceSuggestion, isFresh, lookupCachedCatalogs, createTaxonomy
 } from '../lib/taxonomy.js';
 
 /** The catalog tree as the spike measured it: nested, leaves carry an empty `catalogs`. */
@@ -76,73 +75,90 @@ test('findCatalog: by id, null when unknown — never a near miss', () => {
   assert.equal(findCatalog(flat, null), null);
 });
 
-test('sizesFromAttributes: pulls the size set out of the attribute descriptors', () => {
+test('sizesFromGroups: the size set as /item_upload/size_groups really answers it', () => {
+  // Measured 2026-08-20 on www.vinted.de for catalog 221 (Damen > T-Shirts).
   const body = {
-    attributes: [
-      { code: 'brand', value_ids: null, configuration: null },
-      {
-        code: 'size',
-        configuration: {
-          options: [
-            { id: 102, title: 'XXS / 32 / 4' },
-            { id: 103, title: 'XS / 34 / 6' }
-          ]
-        }
-      }
-    ]
+    size_groups: [{
+      id: 4,
+      caption: 'Größe',
+      description: 'Kleidergrößen',
+      size_ids: [102, 2],
+      sizes: [
+        { id: 102, title: 'XXS / 32 / 4', is_default: 0, is_other: 0, order: 2 },
+        { id: 2, title: 'XS / 34 / 6', is_default: 0, is_other: 0, order: 4 }
+      ]
+    }],
+    code: 0
   };
-  assert.deepEqual(sizesFromAttributes(body), [
-    { id: 102, title: 'XXS / 32 / 4' },
-    { id: 103, title: 'XS / 34 / 6' }
+  assert.deepEqual(sizesFromGroups(body), [
+    { id: 102, title: 'XXS / 32 / 4', group: 'Kleidergrößen' },
+    { id: 2, title: 'XS / 34 / 6', group: 'Kleidergrößen' }
   ]);
 });
 
-test('sizesFromAttributes: a category without sizes yields an empty list, not a throw', () => {
-  assert.deepEqual(sizesFromAttributes({ attributes: [{ code: 'brand' }] }), []);
-  assert.deepEqual(sizesFromAttributes({}), []);
-  assert.deepEqual(sizesFromAttributes(null), []);
-});
-
-test('conditionsFromAttributes: the condition list comes from Vinted, with its own ids', () => {
-  // Deliberately not a table in our code: the ids were never measured, the wording is
-  // per-locale, and a wrong condition is legally binding (§7.5).
+test('sizesFromGroups: several groups are all valid answers, each size once', () => {
   const body = {
-    attributes: [
-      { code: 'size', configuration: { options: [{ id: 102, title: 'M' }] } },
-      {
-        code: 'status',
-        configuration: {
-          options: [
-            { id: 1, title: 'Neu mit Etikett' },
-            { id: 2, title: 'Sehr gut' }
-          ]
-        }
-      }
+    size_groups: [
+      { id: 38, description: 'Schuhe Männer', sizes: [{ id: 900, title: '42' }] },
+      { id: 39, description: 'Schuhe UK', sizes: [{ id: 901, title: '8' }, { id: 900, title: '42' }] }
     ]
   };
-  assert.deepEqual(conditionsFromAttributes(body), [
-    { id: 1, title: 'Neu mit Etikett' },
-    { id: 2, title: 'Sehr gut' }
+  assert.deepEqual(sizesFromGroups(body).map(s => s.id), [900, 901], 'deduplicated by id');
+  assert.equal(sizesFromGroups(body)[1].group, 'Schuhe UK');
+});
+
+test('sizesFromGroups: the empty answer stays empty — it must never become a guess', () => {
+  // This is the exact body the WRONG parameter produced: `catalog_id` instead of
+  // `catalog_ids[]` is answered 200 with an empty list, so nothing threw and no size ever
+  // resolved. The parser cannot catch that; the URL below is what does.
+  assert.deepEqual(sizesFromGroups({ size_groups: [], code: 0 }), []);
+  assert.deepEqual(sizesFromGroups({}), []);
+  assert.deepEqual(sizesFromGroups(null), []);
+});
+
+test('conditionsFromBody: the condition list comes from Vinted, with its own ids', () => {
+  // Measured 2026-08-20: "Sehr gut" is 2, not 3 — which is why no table lives in our code.
+  const body = {
+    conditions: [
+      { id: 6, title: 'Neu, mit Etikett', explanation: 'Ein brandneuer, unbenutzter Artikel mit Etikett.' },
+      { id: 2, title: 'Sehr gut', explanation: 'Ein nur selten benutzter Artikel.' }
+    ],
+    code: 0
+  };
+  assert.deepEqual(conditionsFromBody(body), [
+    { id: 6, title: 'Neu, mit Etikett', explanation: 'Ein brandneuer, unbenutzter Artikel mit Etikett.' },
+    { id: 2, title: 'Sehr gut', explanation: 'Ein nur selten benutzter Artikel.' }
   ]);
-  // The same response answers both — one request, two lists.
-  assert.deepEqual(sizesFromAttributes(body), [{ id: 102, title: 'M' }]);
 });
 
-test('optionsFromAttributes: an unknown attribute code is empty, not a throw', () => {
-  assert.deepEqual(optionsFromAttributes({ attributes: [{ code: 'size' }] }, 'status'), []);
-  assert.deepEqual(optionsFromAttributes(null, 'status'), []);
+test('conditionsFromBody: /api/v2/statuses answers under its own key', () => {
+  assert.deepEqual(conditionsFromBody({ statuses: [{ id: 7, title: 'Nicht voll funktionsfähig' }] }),
+    [{ id: 7, title: 'Nicht voll funktionsfähig', explanation: null }]);
+  assert.deepEqual(conditionsFromBody({}), []);
+  assert.deepEqual(conditionsFromBody(null), []);
 });
 
-test('conditions: cached per category like the sizes', async () => {
+test('conditions: from the per-category endpoint, cached per category', async () => {
   const fetchJson = fakeTransport({
-    '/api/v2/item_upload/attributes': {
-      attributes: [{ code: 'status', configuration: { options: [{ id: 2, title: 'Sehr gut' }] } }]
-    }
+    '/api/v2/item_upload/conditions': { conditions: [{ id: 2, title: 'Sehr gut', explanation: 'selten benutzt' }], code: 0 }
   });
   const taxonomy = createTaxonomy({ fetchJson });
-  assert.deepEqual(await taxonomy.conditions(196), [{ id: 2, title: 'Sehr gut' }]);
+  assert.deepEqual(await taxonomy.conditions(196), [{ id: 2, title: 'Sehr gut', explanation: 'selten benutzt' }]);
   await taxonomy.conditions(196);
   assert.equal(fetchJson.calls.length, 1);
+  assert.match(fetchJson.calls[0].path, /catalog_id=196/);
+  assert.equal(fetchJson.calls[0].method, undefined, 'a read, not a POST');
+});
+
+test('statuses: the general list, for a draft whose category has not resolved', async () => {
+  const fetchJson = fakeTransport({
+    '/api/v2/statuses': { statuses: [{ id: 2, title: 'Sehr gut' }, { id: 7, title: 'Nicht voll funktionsfähig' }] }
+  });
+  const taxonomy = createTaxonomy({ fetchJson });
+  const list = await taxonomy.statuses();
+  assert.deepEqual(list.map(c => c.id), [2, 7]);
+  await taxonomy.statuses();
+  assert.equal(fetchJson.calls.length, 1, 'cached like the per-category list');
 });
 
 // ---------- price suggestion ----------
@@ -235,13 +251,10 @@ test('brands: never cached — the concept says live, and they are category-spec
 });
 
 test('sizes: cached per category, not globally — the size set hangs off the category', async () => {
-  const answer = (path, options) => ({
-    attributes: [{
-      code: 'size',
-      configuration: { options: [{ id: JSON.parse(options.body).attributes[0].value[0], title: 'M' }] }
-    }]
+  const answer = path => ({
+    size_groups: [{ id: 4, description: 'Kleidergrößen', sizes: [{ id: Number(path.split('=')[1]), title: 'M' }] }]
   });
-  const fetchJson = fakeTransport({ '/api/v2/item_upload/attributes': answer });
+  const fetchJson = fakeTransport({ '/api/v2/item_upload/size_groups': answer });
   const taxonomy = createTaxonomy({ fetchJson });
 
   const a = await taxonomy.sizes(196);
@@ -253,13 +266,24 @@ test('sizes: cached per category, not globally — the size set hangs off the ca
   assert.equal(c[0].id, 1807);
 });
 
-test('requiredFields: asked at runtime, never hardcoded', async () => {
-  const fetchJson = fakeTransport({
-    '/api/v2/offline_verification/criteria/': { required_field_codes: ['brand', 'price'], code: 0 }
-  });
-  const taxonomy = createTaxonomy({ fetchJson });
-  assert.deepEqual(await taxonomy.requiredFields(196), ['brand', 'price']);
-  assert.match(fetchJson.calls[0].path, /criteria\/196$/);
+test('sizes: asks with catalog_ids[], the plural spelling Vinted actually answers', async () => {
+  // The singular `catalog_id` returns 200 with an empty list. That is the whole bug: no
+  // error, no size, and a draft that says "Größe fehlt" for every article.
+  const fetchJson = fakeTransport({ '/api/v2/item_upload/size_groups': { size_groups: [] } });
+  await createTaxonomy({ fetchJson }).sizes(1807);
+  assert.match(fetchJson.calls[0].path, /\?catalog_ids\[\]=1807$/);
+});
+
+test('the taxonomy offers neither requiredFields nor packageSize — both were measured wrong', () => {
+  // `offline_verification/criteria` answers `["brand","price"]` for every category there
+  // is (eleven probed on 2026-08-21, from t-shirts to books) while the book upload form
+  // has no brand field at all — it is not the category's mandatory set. And the parcel
+  // suggestion lives on `api.vinted.<tld>`, refuses this transport's auth headers, and
+  // needs an upload session that does not exist yet during preparation. Both now sit
+  // where they belong: `draft.js`, through the content script.
+  const taxonomy = createTaxonomy({ fetchJson: fakeTransport({}) });
+  assert.equal(taxonomy.requiredFields, undefined);
+  assert.equal(taxonomy.packageSize, undefined);
 });
 
 test('priceSuggestion: sends the three ids and never caches — the range moves', async () => {
@@ -299,25 +323,6 @@ test('searchCatalogs: escapes the keyword rather than pasting it into the URL', 
   const fetchJson = fakeTransport({ '/api/v2/item_upload/catalogs/search': { catalog_ids: [] } });
   await createTaxonomy({ fetchJson }).searchCatalogs('T-Shirt & Top');
   assert.match(fetchJson.calls[0].path, /keyword=T-Shirt%20%26%20Top/);
-});
-
-test('packageSize: Vinted recommends the parcel size, so it is not guessed either', async () => {
-  const fetchJson = fakeTransport({
-    '/shipping-estimation/external/package_sizes/suggestion': { package_size_id: 2 }
-  });
-  const taxonomy = createTaxonomy({ fetchJson });
-  const id = await taxonomy.packageSize({ catalogId: 196, brandId: 53, sizeId: 102, uploadSessionId: 'u-1' });
-  assert.equal(id, 2);
-
-  const body = JSON.parse(fetchJson.calls[0].body);
-  assert.equal(body.catalog_id, 196);
-  assert.equal(body.size_id, 102);
-  assert.equal(body.upload_session_id, 'u-1');
-});
-
-test('packageSize: no recommendation means null, never a default parcel', async () => {
-  const fetchJson = fakeTransport({ '/shipping-estimation/external/package_sizes/suggestion': {} });
-  assert.equal(await createTaxonomy({ fetchJson }).packageSize({ catalogId: 196, uploadSessionId: 'u-1' }), null);
 });
 
 // ---------- transport is injected ----------

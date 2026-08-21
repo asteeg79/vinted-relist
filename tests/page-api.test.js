@@ -74,6 +74,38 @@ test('uploadPhotoViaPage: builds multipart with temp_uuid, returns id + temp_uui
   assert.equal(lastMessage.headers['Content-Type'], undefined);
 });
 
+test('uploadPhotoViaPage: keeps high_resolution — that is the id the recognition wants', async () => {
+  // Measured in the 0b spike (§6): `image_metadata[].image_id` is the STRING id under
+  // `high_resolution`, not the numeric `id`. This return value used to drop it, and that
+  // one omission made Entscheidung C dead code — `crossCheckWithVinted` could never build
+  // an entry and returned early on every publish, logging nothing at all.
+  sendMessageImpl = async () => ({
+    ok: true, status: 200, contentType: 'application/json',
+    body: JSON.stringify({ id: 999, temp_uuid: 'tu-1', high_resolution: { id: '03_00f15_MDsRx' } })
+  });
+  const blob = new Blob([new Uint8Array([1])], { type: 'image/jpeg' });
+  const r = await api.uploadPhotoViaPage('www.vinted.de', AUTH, blob, 'p.jpg', {});
+  assert.equal(r.high_resolution.id, '03_00f15_MDsRx');
+});
+
+test('uploadPhotoViaPage: finds high_resolution under a "photo" wrapper too', async () => {
+  sendMessageImpl = async () => ({
+    ok: true, status: 200, contentType: 'application/json',
+    body: JSON.stringify({ photo: { id: 7, temp_uuid: 't', high_resolution: { id: 'abc' } } })
+  });
+  const blob = new Blob([new Uint8Array([1])], { type: 'image/jpeg' });
+  const r = await api.uploadPhotoViaPage('d', AUTH, blob, 'p.jpg', {});
+  assert.equal(r.id, 7);
+  assert.equal(r.high_resolution.id, 'abc');
+});
+
+test('uploadPhotoViaPage: no high_resolution is null, never invented', async () => {
+  sendMessageImpl = async () => ({ ok: true, status: 200, contentType: 'application/json', body: JSON.stringify({ id: 1, temp_uuid: 't' }) });
+  const blob = new Blob([new Uint8Array([1])], { type: 'image/jpeg' });
+  const r = await api.uploadPhotoViaPage('d', AUTH, blob, 'p.jpg', {});
+  assert.equal(r.high_resolution, null);
+});
+
 test('uploadPhotoViaPage: omits temp_uuid part when not given', async () => {
   sendMessageImpl = async () => ({ ok: true, status: 200, contentType: 'application/json', body: JSON.stringify({ id: 1, temp_uuid: 't' }) });
   const blob = new Blob([new Uint8Array([9])], { type: 'image/jpeg' });
@@ -91,6 +123,59 @@ test('createItemViaPage: posts JSON payload with upload-form header', async () =
   assert.equal(lastMessage.headers['X-Upload-Form'], 'true');
   assert.equal(lastMessage.headers['Content-Type'], 'application/json');
   assert.deepEqual(lastMessage.json, { item: { title: 'X' } });
+});
+
+// ---------- fetchCategoryAttributesViaPage ----------
+test('fetchCategoryAttributesViaPage: sends the one body shape Vinted accepts', async () => {
+  // Measured 2026-08-21: `{catalog_id, attributes: []}` → 200. `{catalog_id}` on its own
+  // and `{attributes:[{code:'category',ids:[…]}]}` → 422. The empty `attributes` array is
+  // not decoration.
+  sendMessageImpl = async () => ({
+    ok: true, status: 200, contentType: 'application/json',
+    body: JSON.stringify({ code: 0, attributes: [{ code: 'language_book', value_ids: [] }] })
+  });
+  const attributes = await api.fetchCategoryAttributesViaPage('www.vinted.de', AUTH, 2319);
+  assert.deepEqual(attributes, [{ code: 'language_book', value_ids: [] }]);
+  assert.equal(lastMessage.method, 'POST');
+  assert.equal(lastMessage.path, '/api/v2/item_upload/attributes');
+  assert.deepEqual(lastMessage.json, { catalog_id: 2319, attributes: [] });
+});
+
+test('fetchCategoryAttributesViaPage: a body without the array is an empty list, not a crash', async () => {
+  sendMessageImpl = async () => ({ ok: true, status: 200, contentType: 'application/json', body: '{"code":0}' });
+  assert.deepEqual(await api.fetchCategoryAttributesViaPage('www.vinted.de', AUTH, 1806), []);
+});
+
+// ---------- suggestPackageSizeViaPage ----------
+test('suggestPackageSizeViaPage: goes to api.<domain>, not the marketplace host', async () => {
+  // `https://www.vinted.de/shipping-estimation/…` answers with the 404 HTML page; the
+  // shipping service lives on `api.vinted.de` (measured 2026-08-21 — and that is the host
+  // the SPA itself calls on /items/new).
+  sendMessageImpl = async () => ({ ok: true, status: 200, contentType: 'application/json', body: '{"package_size_id":2}' });
+  const id = await api.suggestPackageSizeViaPage('www.vinted.de', {
+    catalogId: 2319, brandId: null, sizeId: null, uploadSessionId: 'u-1', title: 'Roman', description: 'd', price: 4
+  });
+  assert.equal(id, 2);
+  assert.equal(lastMessage.path, 'https://api.vinted.de/shipping-estimation/external/package_sizes/suggestion');
+  assert.deepEqual(lastMessage.json, {
+    catalog_id: 2319, brand_id: null, size_id: null,
+    upload_session_id: 'u-1', title: 'Roman', description: 'd', price: 4
+  });
+});
+
+test('suggestPackageSizeViaPage: carries no auth headers — the preflight refuses them', async () => {
+  // With X-CSRF-Token / X-Requested-With the CORS preflight fails outright ("Failed to
+  // fetch"); without them the answer is 200. The session travels in the cookies the
+  // content script sends anyway.
+  sendMessageImpl = async () => ({ ok: true, status: 200, contentType: 'application/json', body: '{"package_size_id":1}' });
+  await api.suggestPackageSizeViaPage('www.vinted.de', { catalogId: 1806, uploadSessionId: 'u-1' });
+  assert.deepEqual(Object.keys(lastMessage.headers).sort(), ['Accept', 'Content-Type']);
+});
+
+test('suggestPackageSizeViaPage: null is an answer, not a failure', async () => {
+  // An unknown category is answered `{"package_size_id": null}` with status 200.
+  sendMessageImpl = async () => ({ ok: true, status: 200, contentType: 'application/json', body: '{"package_size_id":null}' });
+  assert.equal(await api.suggestPackageSizeViaPage('www.vinted.de', { catalogId: 999, uploadSessionId: 'u-1' }), null);
 });
 
 // ---------- deleteItemViaPage ----------

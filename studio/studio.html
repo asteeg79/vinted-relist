@@ -98,6 +98,21 @@
     </section>
   </main>
 
+  <!-- Same shape as the popup's log panel — one habit, two screens. -->
+  <section class="log-panel">
+    <details class="log" id="logBox">
+      <summary>
+        <span class="log-title">Log <span id="logCount" class="log-count">0</span></span>
+        <svg class="chev" viewBox="0 0 20 20" aria-hidden="true"><path d="M6 8l4 4 4-4" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </summary>
+      <pre id="log-output"></pre>
+      <div class="log-actions">
+        <button id="copyLog" class="btn-link" type="button">Log &amp; Fehler kopieren</button>
+        <button id="clearLog" class="btn-link" type="button">Log leeren</button>
+      </div>
+    </details>
+  </section>
+
   <script type="module" src="studio.js"></script>
 </body>
 </html>

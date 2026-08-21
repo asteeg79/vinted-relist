@@ -154,15 +154,16 @@ manifest-deklariertes Content-Script keine ES-Module importieren kann.
 
 | Datei | Aufgabe |
 |---|---|
-| `crop.js` | **Pur.** Objektbox, Rahmenwahl, Padding, Pad-Farbe — das Objekt wird nie angeschnitten |
+| `crop.js` | **Pur.** Objektbox, Rahmenwahl, Padding, Pad-Farbe — das Objekt wird nie angeschnitten. `boxFromModel` rechnet die Artikelbox der KI zurück ins Original (zweiter Zuschnitt-Durchgang) |
 | `title.js` | **Pur.** Titelbau je Profil, Kürzungsreihenfolge, Byte-Limit |
 | `resolve.js` | **Pur.** String → Vinted-ID; das Modell wählt aus der Liste, es erfindet keine ID |
+| `condition.js` | **Pur.** Vinteds fünf Zustandsstufen: Vokabular, Zuordnung zur `status_id`, Vorauswahl |
 | `price.js` | **Pur.** Vinteds `midpoint`, Rundung, Untergrenze, Schutz des manuellen Preises |
 | `price-memory.js` | Was du zuletzt für Vergleichbares genommen hast — Hinweis, kein Vorschlag |
 | `draft-view.js` | **Pur.** Render-Modell des Studios: Feldzustände, Blocker, `canPublish` |
 | `ai.js` | Anthropic-Client (Haiku): ein Erkennungs-Call je Artikel, Tool-Use mit JSON-Schema |
 | `secret.js` | API-Key verschlüsselt (PBKDF2 + AES-GCM), Klartext nur in `storage.session` |
-| `taxonomy.js` | Kategorien, Marken, Farben, Größen, Pflichtfelder, Preisspanne — **Transport injiziert** |
+| `taxonomy.js` | Kategorien, Marken, Farben, Größen, Zustände, Preisspanne — **Transport injiziert** |
 | `vinted-read.js` | Der Lese-Transport aus der Extension-Page (Spike 0b) |
 | `lookup.js` | Die Vorbereitung: Erkennung → IDs → Preis. Lesend, ohne Lock |
 | `draft.js` | Die Veröffentlichungs-Pipeline gegen den `DraftPort` |
@@ -175,7 +176,7 @@ manifest-deklariertes Content-Script keine ES-Module importieren kann.
 | Datei | Aufgabe |
 |---|---|
 | `studio.js` | Intake, Review, Kopieren/Herunterladen — **enthält keine Entscheidung** |
-| `canvas.js` | Canvas-Adapter: EXIF aufrichten, zuschneiden bzw. padden, JPEG q=0.9 |
+| `canvas.js` | Canvas-Adapter: EXIF aufrichten, zuschneiden bzw. padden, JPEG q=0.9. Zwei Ausgaben aus **einem** Rahmen: die Inseratsdatei (1080×1350) und die Modellkopie (bis 1568, direkt aus dem Original). `prepare(file, {modelBox, previousFrame})` zeichnet für den zweiten Durchgang neu — immer aus dem Original, nie aus dem Zuschnitt |
 
 `studio/*` ist die einzige Zone neben `content/`, die bewusst nicht unit-getestet wird —
 deshalb liegt jede Entscheidung in `draft-view.js`. Nach jeder UI-Änderung einmal im

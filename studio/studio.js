@@ -13,15 +13,14 @@
 import { getSettings } from '../lib/settings.js';
 import { readCachedKey } from '../lib/secret.js';
 import { analyse } from '../lib/ai.js';
-import { draftView, FIELD_NEEDS_CONFIRMATION } from '../lib/draft-view.js';
+import { draftView, conflictedFields, FIELD_NEEDS_CONFIRMATION } from '../lib/draft-view.js';
 import { loadPriceMemory, savePrice } from '../lib/price-memory.js';
 import { HARD_MAX, SOFT_MAX } from '../lib/title.js';
 import { createTaxonomy } from '../lib/taxonomy.js';
 import { createVintedFetch } from '../lib/vinted-read.js';
-import { lookupDraft, preselectCondition } from '../lib/lookup.js';
-import { CONDITION_OPTIONS } from '../lib/settings.js';
+import { lookupDraft } from '../lib/lookup.js';
 import { ensureAuth } from '../lib/auth.js';
-import { log } from '../lib/logger.js';
+import { log, LOG_KEY, clearLog } from '../lib/logger.js';
 
 /**
  * Conservative until the spike (Schritt 0b) says what Vinted actually allows. ONE place,
@@ -48,7 +47,8 @@ const state = {
   // --- Stufe 2: what the lookup against Vinted produced -------------------------------
   resolved: {},
   conditions: [],
-  requiredFields: [],
+  /** { source: 'ai' | 'default' | 'user' | null, evidence } — where state.condition came from */
+  conditionMeta: {},
   lookupWarnings: [],
   picks: {},
   price: null,
@@ -98,11 +98,22 @@ async function addFiles(files) {
   for (const file of accepted) {
     try {
       const prepared = await prepare(file);
-      state.photos.push({ id: crypto.randomUUID(), name: file.name, role: '', croppedOff: false, ...prepared });
+      // The File is kept, not just the result: the second crop pass redraws from the
+      // original, and re-cropping a crop would only compound the loss.
+      state.photos.push({ id: crypto.randomUUID(), name: file.name, file, role: '', croppedOff: false, ...prepared });
       log('studio_photo', {
+        // Without the name the three lines cannot be matched to the three files, and
+        // "which photo was the label?" stays unanswerable.
+        name: file.name,
         mode: prepared.mode,
         reason: prepared.reason,
         touchesEdge: prepared.touchesEdge,
+        listing: `${prepared.width}×${prepared.height}`,
+        // What the recognition really gets to look at: the whole photo, uncropped. If this
+        // ever stops matching the source's aspect ratio, something is cropping before the
+        // model sees it — which is exactly the bug this arrangement exists to prevent.
+        model: `${prepared.modelWidth}×${prepared.modelHeight}`,
+        modelKb: Math.round(prepared.modelBytes / 1024),
         ...prepared.stats
       });
     } catch (e) {
@@ -122,6 +133,7 @@ function removePhoto(id) {
   const index = state.photos.findIndex(p => p.id === id);
   if (index < 0) return;
   URL.revokeObjectURL(state.photos[index].url);
+  URL.revokeObjectURL(state.photos[index].modelUrl);
   state.photos.splice(index, 1);
   render();
 }
@@ -144,7 +156,10 @@ $('analyse').addEventListener('click', async () => {
       { apiKey, settings: state.settings, log }
     );
     applySuggestedOrder();
-    setAnalyse('Erkannt. Schlage Kategorie, Marke und Preis nach…', 'working');
+    setAnalyse('Erkannt. Schneide nach, was nicht zum Artikel gehört…', 'working');
+    await applySuggestedCrops();
+    render(); // the new crops before the lookup's wait, not after it
+    setAnalyse('Schlage Kategorie, Marke und Preis nach…', 'working');
     await runLookup();
     setAnalyse('Fertig. Jetzt prüfen und bestätigen.', 'ok');
   } catch (e) {
@@ -171,24 +186,34 @@ async function runLookup() {
       taxonomy,
       picks: state.picks,
       price: state.price,
-      condition: state.condition
+      condition: state.condition,
+      settings: state.settings || {},
+      // What the user typed wins over what the model called the article.
+      labels: { category: state.overrides.category }
     });
     state.resolved = result.resolved;
     state.conditions = result.conditions;
-    state.requiredFields = result.requiredFields;
     state.lookupWarnings = result.warnings;
     state.price = result.price;
-    // Place the cursor on the configured default — once, and only if Vinted's list
-    // actually contains it. Nothing pre-selected is better than something nobody chose.
-    if (state.condition == null) {
-      state.condition = preselectCondition(result.conditions, conditionLabel(state.settings?.draftConditionDefault));
-    }
+    // The cursor position for the condition, decided in lib/condition.js: the model's
+    // reading when it was sure enough, otherwise the configured default. Either way it
+    // still has to be confirmed.
+    state.condition = result.condition.id;
+    state.conditionMeta = { source: result.condition.source, evidence: result.condition.evidence };
     log('studio_lookup', {
       catalog: result.resolved.catalog?.id ?? null,
       brand: result.resolved.brand?.id ?? null,
       size: result.resolved.size?.id ?? null,
       color: result.resolved.color?.id ?? null,
       price: result.price?.value ?? null,
+      // Enough to tell the two size failures apart without another round trip: did the
+      // model read nothing, or did Vinted's set not contain what it read?
+      sizeRead: state.analysis?.size_label ?? null,
+      sizeSource: state.analysis?.size_source ?? null,
+      sizeOptions: (result.resolved.size?.candidates?.length ?? 0) || null,
+      conditionCount: result.conditions.length,
+      condition: result.condition.id,
+      conditionFrom: result.condition.source,
       warnings: result.warnings.length
     });
   } catch (e) {
@@ -229,10 +254,58 @@ function applySuggestedOrder() {
     const entry = byIndex.get(state.photos.indexOf(photo));
     photo.role = entry?.role || '';
     photo.croppedOff = entry?.cropped_off === true;
+    photo.distractions = entry?.distractions || null;
+    photo.articleBox = entry?.article_box || null;
     // The model looked at this one — from here its verdict outranks the crop heuristic.
     photo.judged = entry != null;
   }
   state.photos = ordered;
+}
+
+/**
+ * Second crop pass: redraw the photos for which the model drew an article box.
+ *
+ * This is the answer to the photographer's shoes at the bottom edge. `objectBox` removes
+ * background and keeps everything else, and shoes are not background — no threshold fixes
+ * that, because from the pixels' point of view the shoes are a perfectly good object. The
+ * model is the only party that knows which object is the article.
+ *
+ * Each photo is redrawn from its ORIGINAL file, never from the already-cropped copy: two
+ * crops in a row would compound the loss on exactly the pixels the recognition needs.
+ * `boxFromModel` refuses an implausible box, and then the first pass simply stands.
+ */
+async function applySuggestedCrops() {
+  const pending = state.photos.filter(p => p.articleBox && p.file && p.modelFrame);
+  if (!pending.length) return;
+
+  const { prepare } = await import('./canvas.js');
+  for (const photo of pending) {
+    try {
+      const redrawn = await prepare(photo.file, { modelBox: photo.articleBox, previousFrame: photo.modelFrame });
+      if (redrawn.boxSource !== 'model') {
+        // 'full_frame' is the normal "nothing to trim here" and stays quiet as such; the
+        // other reasons mean the model proposed something unusable, and a model that keeps
+        // doing that is a prompt problem which silence would hide.
+        log('studio_recrop_skipped', { name: photo.name, reason: redrawn.boxReason, box: photo.articleBox });
+        URL.revokeObjectURL(redrawn.url);
+        URL.revokeObjectURL(redrawn.modelUrl);
+        continue;
+      }
+      URL.revokeObjectURL(photo.url);
+      URL.revokeObjectURL(photo.modelUrl);
+      Object.assign(photo, redrawn);
+      log('studio_recrop', {
+        name: photo.name,
+        distractions: photo.distractions,
+        mode: redrawn.mode,
+        listing: `${redrawn.width}×${redrawn.height}`,
+        model: `${redrawn.modelWidth}×${redrawn.modelHeight}`
+      });
+    } catch (e) {
+      // A failed redraw leaves the first pass in place — a photo, just with more background.
+      log('studio_recrop_failed', { name: photo.name, error: e.message });
+    }
+  }
 }
 
 // ---------- Rendering ----------
@@ -257,6 +330,8 @@ function currentView() {
     resolved: state.resolved,
     price: state.price,
     condition: state.condition,
+    conditions: state.conditions,
+    conditionMeta: state.conditionMeta,
     confirmations: state.confirmations,
     overrides: state.overrides,
     priceMemory: state.priceMemory,
@@ -361,6 +436,31 @@ function renderPhotos(view) {
     done.textContent = `${how} · ${entry.width}×${entry.height}`;
     li.appendChild(done);
 
+    // Say when the second pass actually moved the frame, and what it removed. Otherwise
+    // "hat die KI die Füße rausgeschnitten?" is only answerable by comparing two crops
+    // from memory.
+    if (photo.boxSource === 'model') {
+      const recrop = document.createElement('span');
+      recrop.className = 'photo-recrop';
+      recrop.textContent = photo.distractions
+        ? `nachgeschnitten · ${photo.distractions} entfernt`
+        : 'nachgeschnitten durch die Erkennung';
+      li.appendChild(recrop);
+    }
+
+    // The exact JPEG the recognition receives. When a size stays unread, this answers the
+    // only question that matters first — was the label legible at all? — by looking,
+    // rather than by another round of prompt guesswork.
+    if (photo.modelUrl) {
+      const seen = document.createElement('a');
+      seen.className = 'photo-seen';
+      seen.href = photo.modelUrl;
+      seen.target = '_blank';
+      seen.rel = 'noopener';
+      seen.textContent = `was die KI sieht · ungeschnitten · ${photo.modelWidth}×${photo.modelHeight}`;
+      li.appendChild(seen);
+    }
+
     if (entry.warning) {
       const warn = document.createElement('span');
       warn.className = 'photo-warn ' + (entry.warningLevel || 'warn');
@@ -434,6 +534,13 @@ function renderFields(view) {
       li.appendChild(note);
     }
 
+    if (field.hint) {
+      const hint = document.createElement('span');
+      hint.className = 'field-hint';
+      hint.textContent = field.hint;
+      li.appendChild(hint);
+    }
+
     if (field.key === 'price' && view.priceHint) li.appendChild(priceHint(view));
     if (field.candidates.length > 1) li.appendChild(candidateSelect(field));
     return li;
@@ -459,19 +566,34 @@ function valueInput(field) {
   });
   input.addEventListener('change', async () => {
     if (field.key === 'price') await rememberCurrentPrice();
+    // A retyped category is a new question for Vinted, not just new text: the size set,
+    // the brand list and the price range all hang off it.
+    if (field.key === 'category') {
+      delete state.picks.category; // the typed word replaces an earlier choice
+      setAnalyse('Schlage die Kategorie nach…', 'working');
+      await runLookup();
+      const found = state.resolved.catalog?.id;
+      if (found != null) {
+        // Nail it down as a pick and drop the typed text, so the field shows Vinted's own
+        // wording and the next lookup does not have to find it again from the model's word.
+        state.picks.category = found;
+        delete state.overrides.category;
+        await runLookup();
+      }
+      setAnalyse(found != null ? `Kategorie: ${state.resolved.catalog.label}` : 'Keine passende Kategorie gefunden.',
+        found != null ? 'ok' : 'error');
+    }
     render();
   });
   return input;
 }
 
-/** The label the settings' symbolic default stands for ("very_good" → "Sehr gut"). */
-function conditionLabel(value) {
-  return CONDITION_OPTIONS.find(o => o.value === value)?.label ?? null;
-}
-
 /**
  * The condition select — filled from VINTED's list once the lookup has run, because those
  * carry the real `status_id`s. Before that there is nothing honest to offer.
+ *
+ * Each option keeps Vinted's own explanation as its tooltip, so "Sehr gut" is judged by
+ * their yardstick and not by the seller's hope.
  */
 function conditionInput(field) {
   const select = document.createElement('select');
@@ -483,17 +605,20 @@ function conditionInput(field) {
   empty.textContent = state.conditions.length ? 'Zustand wählen' : 'kommt mit dem Nachschlagen';
   select.appendChild(empty);
 
-  for (const { id, title } of state.conditions) {
+  for (const { id, title, explanation } of state.conditions) {
     const option = document.createElement('option');
     option.value = String(id);
     option.textContent = title;
+    if (explanation) option.title = explanation;
     select.appendChild(option);
   }
   select.disabled = state.conditions.length === 0;
-  select.value = field.value != null ? String(field.value) : '';
+  select.value = field.id != null ? String(field.id) : '';
+  select.title = state.conditions.find(c => String(c.id) === select.value)?.explanation || '';
 
   select.addEventListener('change', async () => {
     state.condition = select.value ? Number(select.value) : null;
+    state.conditionMeta = { source: 'user', evidence: null };
     delete state.overrides.condition;
     // A changed condition is a new answer — it has to be confirmed again. And the price
     // range moves with it, so it is refetched (Entscheidung W3).
@@ -636,7 +761,9 @@ $('publish').addEventListener('click', async () => {
           overrides: state.overrides,
           price: state.price,
           condition: state.condition,
-          packageSizeId: state.packageSizeId ?? null,
+          conditions: state.conditions,
+          // Keine Sendungsgröße: die holt die Pipeline bei Vinted, sobald es eine
+          // upload_session_id gibt. Hier stand ein Feld, das nie jemand gesetzt hat.
           photos: state.photos.map(p => ({ touchesEdge: p.touchesEdge, judged: p.judged === true }))
         },
         photos: state.photos.map((p, i) => ({
@@ -646,6 +773,18 @@ $('publish').addEventListener('click', async () => {
     });
     const message = reply?.message || { kind: 'error', text: 'Fehler: unbekannt' };
     setPublish(message.text, message.kind);
+
+    // Vinted disagreed. Adopt the cross-checked resolutions so the affected fields open up
+    // with BOTH answers to pick from, and drop the confirmations the disagreement made
+    // stale — a colour confirmed before Vinted objected is not a decision about the
+    // objection.
+    if (reply?.conflict && reply.resolved) {
+      state.resolved = { ...state.resolved, ...reply.resolved };
+      const open = conflictedFields(state.resolved);
+      for (const key of open) delete state.confirmations[key];
+      log('studio_conflict', { fields: open });
+    }
+
     if (reply?.newUrl) log('studio_published', { newId: reply.newId });
   } catch (e) {
     setPublish('Fehler: ' + e.message, 'error');
@@ -697,8 +836,84 @@ function flash(button, temporary, original) {
   setTimeout(() => { button.textContent = original; }, 1500);
 }
 
+// ---------- Log ----------
+//
+// The popup's panel, same behaviour: the tail on screen, the whole thing on the clipboard.
+// Deliberately not a studio-flavoured variant — the log is what ends up in a bug report,
+// and two formats would mean two things to read.
+
+/** How many lines the panel shows. The clipboard gets all of them. */
+const LOG_TAIL = 60;
+
+async function refreshLog() {
+  let lines = [];
+  try {
+    ({ [LOG_KEY]: lines = [] } = await chrome.storage.local.get(LOG_KEY));
+  } catch (e) {
+    // The panel is the thing people read when something is wrong. It failing silently is
+    // the worst of both worlds, so it says so in its own <pre>.
+    $('log-output').textContent = 'Log konnte nicht gelesen werden: ' + e.message;
+    return;
+  }
+  $('logCount').textContent = String(lines.length);
+  const out = $('log-output');
+  out.textContent = lines.slice(-LOG_TAIL).join('\n');
+  // Follow the tail while it is open — the interesting line is always the last one.
+  if ($('logBox').open) out.scrollTop = out.scrollHeight;
+}
+
+// Every log() writes to storage, so this fires for the studio's own lines as well as for
+// anything the service worker logs during publishing.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes[LOG_KEY]) refreshLog();
+});
+
+$('logBox').addEventListener('toggle', () => { if ($('logBox').open) refreshLog(); });
+
+/**
+ * The support bundle: version, what the draft currently holds, then the full log.
+ *
+ * The draft summary is the half a log line cannot carry — which ids were resolved and what
+ * is still blocking. Photos are named by size only; no image data goes on the clipboard.
+ */
+$('copyLog').addEventListener('click', async e => {
+  const button = e.currentTarget;
+  const { [LOG_KEY]: lines = [] } = await chrome.storage.local.get(LOG_KEY);
+  const view = currentView();
+  const parts = [
+    `Vinted Relist v${chrome.runtime.getManifest().version} — Studio`,
+    `Titel: ${view.title || '(leer)'}`,
+    `Profil: ${view.profile}`,
+    `Felder: ${view.fields.map(f => `${f.label}=${f.value ?? '—'}[${f.state}]`).join(', ')}`,
+    `IDs: katalog=${state.resolved.catalog?.id ?? '—'} marke=${state.resolved.brand?.id ?? '—'} `
+      + `größe=${state.resolved.size?.id ?? '—'} farbe=${state.resolved.color?.id ?? '—'} `
+      + `zustand=${state.condition ?? '—'} (${state.conditionMeta.source ?? '—'})`,
+    `Größe laut KI: ${state.analysis?.size_label ?? '—'} (${state.analysis?.size_source ?? '—'}, `
+      + `Foto ${state.analysis?.size_photo ?? '—'})`,
+    `Fotos: ${state.photos.map(p => `${p.width}×${p.height}→KI ${p.modelWidth}×${p.modelHeight}`).join(' | ') || '(keine)'}`,
+    `Blocker: ${view.blockers.join(' | ') || '(keine)'}`,
+    '',
+    '--- Log ---',
+    lines.length ? lines.join('\n') : '(leer)'
+  ];
+  try {
+    await navigator.clipboard.writeText(parts.join('\n'));
+    button.classList.add('copied');
+    flash(button, 'Kopiert ✓', 'Log & Fehler kopieren');
+    setTimeout(() => button.classList.remove('copied'), 1500);
+  } catch {
+    flash(button, 'Fehler beim Kopieren', 'Log & Fehler kopieren');
+  }
+});
+
+$('clearLog').addEventListener('click', async () => {
+  await clearLog();
+  refreshLog();
+});
+
 // ---------- Init ----------
 
 state.settings = await getSettings();
 state.priceMemory = await loadPriceMemory();
 render();
+refreshLog();

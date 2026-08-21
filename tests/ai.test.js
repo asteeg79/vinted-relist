@@ -4,6 +4,7 @@ import {
   MODEL, API_URL, TOOL_NAME, buildAnalysisRequest, parseAnalysis, analyse
 } from '../lib/ai.js';
 import { DEFAULT_SETTINGS, DEFAULT_DESCRIPTION_TEMPLATE } from '../lib/settings.js';
+import { CONDITIONS, CONDITION_VALUES } from '../lib/condition.js';
 
 const API_KEY = 'sk-ant-api03-supersecret';
 const IMAGES = [
@@ -30,6 +31,10 @@ function response(overrides = {}) {
           type_confidence: 0.97,
           size_label: 'M',
           size_source: 'label_photo',
+          size_photo: 0,
+          condition: 'very_good',
+          condition_confidence: 0.85,
+          condition_evidence: 'kaum Gebrauchsspuren, Bündchen fest',
           category_group: 'clothing',
           colors: ['schwarz'],
           material: 'Baumwolle',
@@ -39,8 +44,8 @@ function response(overrides = {}) {
             { label: 'Passform', value: 'gerade' }
           ],
           photo_order: [
-            { index: 1, role: 'Gesamtansicht vorn', cropped_off: false },
-            { index: 0, role: 'Etikett', cropped_off: true }
+            { index: 1, role: 'Gesamtansicht vorn', cropped_off: false, distractions: 'Füße des Fotografen', article_box: { x: 0.05, y: 0.02, w: 0.9, h: 0.72 } },
+            { index: 0, role: 'Etikett', cropped_off: true, distractions: null, article_box: null }
           ],
           notes: ['Etikett leicht unscharf'],
           ...overrides
@@ -105,6 +110,34 @@ test('buildAnalysisRequest: the system prompt forbids guessing', () => {
   assert.match(body.system, /rate|Raten|geraten/i);
 });
 
+test('buildAnalysisRequest: the prompt says WHERE size labels sit, not just to read one', () => {
+  // "Größe, wenn lesbar" produced nulls on articles whose label was photographed. The
+  // places a label hides are the part the model cannot infer from the field name.
+  const body = buildAnalysisRequest(IMAGES, { settings: DEFAULT_SETTINGS });
+  assert.match(body.system, /Nacken/);
+  assert.match(body.system, /Innensohle/);
+  assert.match(body.system, /JEDES Foto/);
+  assert.match(body.system, /ZEICHENGETREU/, 'no unit conversion, no tidying up');
+});
+
+test('buildAnalysisRequest: the condition is judged by Vinted\'s own definitions', () => {
+  const body = buildAnalysisRequest(IMAGES, { settings: DEFAULT_SETTINGS });
+  for (const c of CONDITIONS) {
+    assert.ok(body.system.includes(c.value), `${c.value} missing from the prompt`);
+    assert.ok(body.system.includes(c.definition), `${c.value}: Vinted's wording, not ours`);
+  }
+  assert.match(body.system, /schlechtere Stufe/, 'in doubt, downwards — over-stated goods get returned');
+});
+
+test('buildAnalysisRequest: the condition enum offers an explicit "could not tell"', () => {
+  const body = buildAnalysisRequest(IMAGES, { settings: DEFAULT_SETTINGS });
+  const schema = body.tools[0].input_schema;
+  assert.deepEqual(schema.properties.condition.enum, [...CONDITION_VALUES, 'unknown']);
+  for (const key of ['condition', 'condition_confidence', 'condition_evidence', 'size_photo']) {
+    assert.ok(schema.required.includes(key), `${key} must be required — absence is stated, not omitted`);
+  }
+});
+
 test('buildAnalysisRequest: uses Haiku and sends no 4.6-only parameters', () => {
   const body = buildAnalysisRequest(IMAGES, { settings: DEFAULT_SETTINGS });
   assert.equal(body.model, MODEL);
@@ -160,6 +193,31 @@ test('parseAnalysis: rejects an out-of-range confidence', () => {
 test('parseAnalysis: rejects an unknown enum value', () => {
   assert.throws(() => parseAnalysis(broken({ size_source: 'geschätzt' })), /size_source/);
   assert.throws(() => parseAnalysis(broken({ category_group: 'moebel' })), /category_group/);
+  assert.throws(() => parseAnalysis(broken({ condition: 'bespielt' })), /condition/);
+  assert.throws(() => parseAnalysis(broken({ condition: null })), /condition/);
+});
+
+test('parseAnalysis: the condition arrives with a confidence and what it was based on', () => {
+  const a = parseAnalysis(response());
+  assert.equal(a.condition, 'very_good');
+  assert.equal(a.condition_confidence, 0.85);
+  assert.equal(a.condition_evidence, 'kaum Gebrauchsspuren, Bündchen fest');
+  // "Looked and could not decide" is a real answer, not a malformed one.
+  assert.equal(parseAnalysis(broken({ condition: 'unknown', condition_evidence: null })).condition, 'unknown');
+});
+
+test('parseAnalysis: rejects a condition confidence outside 0..1', () => {
+  assert.throws(() => parseAnalysis(broken({ condition_confidence: 1.4 })), /condition_confidence/);
+  assert.throws(() => parseAnalysis(broken({ condition_confidence: '0.9' })), /condition_confidence/);
+  assert.throws(() => parseAnalysis(broken({ condition_evidence: 42 })), /condition_evidence/);
+});
+
+test('parseAnalysis: size_photo must name a photo that exists', () => {
+  assert.equal(parseAnalysis(broken({ size_photo: null }), 2).size_photo, null);
+  assert.equal(parseAnalysis(broken({ size_photo: 1 }), 2).size_photo, 1);
+  assert.throws(() => parseAnalysis(broken({ size_photo: 5 }), 2), /size_photo/);
+  assert.throws(() => parseAnalysis(broken({ size_photo: -1 }), 2), /size_photo/);
+  assert.throws(() => parseAnalysis(broken({ size_photo: '0' }), 2), /size_photo/);
 });
 
 test('parseAnalysis: rejects a missing field rather than defaulting it', () => {

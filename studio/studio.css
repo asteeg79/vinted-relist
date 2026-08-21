@@ -160,6 +160,27 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* The second pass moved the frame — good news, so it reads like the "done" line. */
+.photo-recrop {
+  display: block;
+  font-size: 10px;
+  color: var(--teal-dark);
+  background: var(--teal-soft);
+  padding: 3px 6px;
+}
+
+/* The exact copy the model receives — a debugging affordance, so it stays quiet. */
+.photo-seen {
+  display: block;
+  font-size: 10px;
+  color: var(--ink-3);
+  padding: 3px 6px;
+  font-variant-numeric: tabular-nums;
+  text-decoration: underline;
+}
+
+.photo-seen:hover { color: var(--teal-dark); }
+
 .photo-warn {
   display: block;
   font-size: 10.5px;
@@ -309,6 +330,13 @@ body {
   color: var(--warn-fg);
 }
 
+/* Where a value came from. Quieter than a note on purpose: it explains, it does not warn. */
+.field-hint {
+  grid-column: 2 / -1;
+  font-size: 11px;
+  color: var(--ink-3);
+}
+
 .field-candidates {
   grid-column: 2 / -1;
   font: inherit;
@@ -389,3 +417,116 @@ body {
 
 .hint { font-size: 11.5px; color: var(--ink-3); margin: 10px 0 0; }
 .hint.warn { color: var(--warn-fg); font-weight: 600; }
+
+/* ---------- Log ----------
+   Deliberately the popup's panel, copied rule for rule: the same collapsed <details>, the
+   same dark <pre>, the same two link-buttons. A second screen that logs differently is a
+   second thing to learn, and the log is what gets pasted into a bug report. */
+/* Sticky, and that is the whole point.
+   The first version sat at the very bottom of the page — a thin collapsed line underneath
+   three tall columns. It rendered perfectly and nobody ever saw it. The popup gets away
+   with the same markup because its window is 380 px tall; a full-page studio does not.
+   Anchored to the bottom of the viewport it is always one click away, and closed it costs
+   a single row of height. */
+.log-panel {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  padding: 0 24px;
+  background: var(--card);
+  border-top: 1px solid var(--line);
+  box-shadow: 0 -2px 10px rgba(22, 32, 42, 0.06);
+}
+
+.log {
+  padding: 2px 0 8px;
+}
+
+/* How many lines are in there — the difference between "a log exists" and "the log is
+   alive". An empty studio shows 0, and after a run the number moves. */
+.log-count {
+  display: inline-block;
+  min-width: 18px;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--bg-soft);
+  color: var(--ink-3);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.log-title { font-weight: 600; }
+
+.log summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  color: var(--ink-2);
+  font-size: 11.5px;
+  font-weight: 500;
+  padding: 4px 0;
+  list-style: none;
+  user-select: none;
+}
+
+.log summary::-webkit-details-marker { display: none; }
+
+.chev {
+  width: 14px;
+  height: 14px;
+  color: var(--ink-3);
+  transition: transform 0.2s;
+}
+
+.log[open] .chev { transform: rotate(180deg); }
+
+#log-output {
+  max-height: 260px;
+  overflow: auto;
+  background: #14181b;
+  color: #c8cdd1;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 10.5px;
+  line-height: 1.55;
+  margin: 8px 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+#log-output:empty::before {
+  content: "Noch keine Einträge.";
+  color: #6b7177;
+  font-style: italic;
+}
+
+.log-actions {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+}
+
+.btn-link {
+  display: inline-block;
+  background: none;
+  border: 0;
+  padding: 4px 0;
+  margin-top: 6px;
+  color: var(--ink-3);
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  width: auto;
+}
+
+.btn-link:hover { color: var(--ink-2); }
+
+.btn-link.copied {
+  color: var(--ok-fg);
+  text-decoration: none;
+}
