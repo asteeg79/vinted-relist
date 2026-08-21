@@ -15,6 +15,7 @@ import { readCachedKey } from '../lib/secret.js';
 import { analyse } from '../lib/ai.js';
 import { draftView, conflictedFields, FIELD_NEEDS_CONFIRMATION } from '../lib/draft-view.js';
 import { loadPriceMemory, savePrice } from '../lib/price-memory.js';
+import { draftStageNote } from '../lib/gates.js';
 import { HARD_MAX, SOFT_MAX } from '../lib/title.js';
 import { createTaxonomy } from '../lib/taxonomy.js';
 import { createVintedFetch } from '../lib/vinted-read.js';
@@ -160,8 +161,8 @@ $('analyse').addEventListener('click', async () => {
     await applySuggestedCrops();
     render(); // the new crops before the lookup's wait, not after it
     setAnalyse('Schlage Kategorie, Marke und Preis nach…', 'working');
-    await runLookup();
-    setAnalyse('Fertig. Jetzt prüfen und bestätigen.', 'ok');
+    const failed = await runLookup();
+    setAnalyse(failed || 'Fertig. Jetzt prüfen und bestätigen.', failed ? 'error' : 'ok');
   } catch (e) {
     log('studio_analyse_failed', { error: e.message, status: e.status });
     setAnalyse('Fehler: ' + e.message, 'error');
@@ -177,9 +178,15 @@ $('analyse').addEventListener('click', async () => {
  * Read-only — no photo is uploaded, no lock is taken (§4.5). Runs again whenever
  * something it depends on moves: a chosen candidate, or a changed condition (the range
  * shifted from 4–9 € to 11–23 € for the same article in the spike).
+ *
+ * GIBT DIE FEHLERMELDUNG ZURÜCK, sonst null. Jeder Aufrufer muss sie anzeigen: eine
+ * gescheiterte Auflösung ändert an den Feldern nichts, und ohne ein Wort auf dem Bildschirm
+ * sieht das aus, als hätte der Klick nichts ausgelöst. Genau so wurde am 2026-08-21 eine
+ * abgelaufene Sitzung erlebt — dreimal eine Kategorie gewählt, dreimal 401, dreimal keine
+ * sichtbare Reaktion. Der Satz stammt aus `lib/`; hier wird er nur hingeschrieben.
  */
 async function runLookup() {
-  if (!state.analysis) return;
+  if (!state.analysis) return null;
   try {
     const result = await lookupDraft({
       analysis: state.analysis,
@@ -187,6 +194,9 @@ async function runLookup() {
       picks: state.picks,
       price: state.price,
       condition: state.condition,
+      // Mitgeben, sonst gilt jede behaltene Stufe als selbst gewählt und der Hinweis,
+      // warum die Erkennung sie vorgeschlagen hat, verschwindet beim nächsten Nachschlagen.
+      conditionMeta: state.conditionMeta,
       settings: state.settings || {},
       // What the user typed wins over what the model called the article.
       labels: { category: state.overrides.category }
@@ -216,11 +226,13 @@ async function runLookup() {
       conditionFrom: result.condition.source,
       warnings: result.warnings.length
     });
+    return null;
   } catch (e) {
     // A failed lookup leaves the draft as it was — unresolved fields block publishing
     // anyway, so there is nothing to fall back to and nothing to invent.
     log('studio_lookup_failed', { error: e.message, status: e.status });
-    state.lookupWarnings = ['Nachschlagen bei Vinted fehlgeschlagen: ' + e.message];
+    state.lookupWarnings = [e.message];
+    return e.message;
   }
 }
 
@@ -350,6 +362,12 @@ function render() {
   renderPhotos(view);
   renderFields(view);
   renderDerived(view);
+
+  // Das Schild oben rechts. Der Text kam bis 0.90.0 aus dem HTML und stand auf „Stufe 1",
+  // während die Seite längst nachschlug und hochlud.
+  const stage = draftStageNote({ settings: state.settings || {}, hasAnalysis: !!state.analysis });
+  $('stageNote').textContent = stage.text;
+  $('stageNote').className = 'stage-note is-' + stage.kind;
 
   $('volatileHint').hidden = !state.photos.length;
   $('analyse').disabled = state.busy || !state.photos.length;
@@ -571,17 +589,19 @@ function valueInput(field) {
     if (field.key === 'category') {
       delete state.picks.category; // the typed word replaces an earlier choice
       setAnalyse('Schlage die Kategorie nach…', 'working');
-      await runLookup();
-      const found = state.resolved.catalog?.id;
+      let failed = await runLookup();
+      const found = failed ? null : state.resolved.catalog?.id;
       if (found != null) {
         // Nail it down as a pick and drop the typed text, so the field shows Vinted's own
         // wording and the next lookup does not have to find it again from the model's word.
         state.picks.category = found;
         delete state.overrides.category;
-        await runLookup();
+        failed = await runLookup();
       }
-      setAnalyse(found != null ? `Kategorie: ${state.resolved.catalog.label}` : 'Keine passende Kategorie gefunden.',
-        found != null ? 'ok' : 'error');
+      // "Keine passende Kategorie gefunden" wäre bei einem 401 schlicht gelogen — der
+      // Fehler hat Vorrang vor jedem Befund.
+      setAnalyse(failed || (found != null ? `Kategorie: ${state.resolved.catalog.label}` : 'Keine passende Kategorie gefunden.'),
+        (failed || found == null) ? 'error' : 'ok');
     }
     render();
   });
@@ -623,7 +643,8 @@ function conditionInput(field) {
     // A changed condition is a new answer — it has to be confirmed again. And the price
     // range moves with it, so it is refetched (Entscheidung W3).
     delete state.confirmations.condition;
-    await runLookup();
+    const failed = await runLookup();
+    if (failed) setAnalyse(failed, 'error');
     render();
   });
   return select;
@@ -688,7 +709,10 @@ function candidateSelect(field) {
     if (Number.isFinite(id)) {
       // The pick still passes validatePick inside resolve.js — this only proposes it.
       state.picks[field.key] = id;
-      await runLookup();
+      setAnalyse(`${field.label} wird nachgeschlagen…`, 'working');
+      const failed = await runLookup();
+      const chosen = field.candidates.find(c => c.id === id)?.label;
+      setAnalyse(failed || `${field.label}: ${chosen ?? 'übernommen'}`, failed ? 'error' : 'ok');
     } else {
       state.overrides[field.key] = select.value;
     }

@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { lookupDraft, applySuggestions } from '../lib/lookup.js';
+import { AuthError } from '../lib/errors.js';
 
 const CATALOGS = [
   { id: 5, title: 'Herren', path: 'Herren', isLeaf: false },
@@ -365,11 +366,80 @@ test('lookupDraft: a failing search is simply no answer, never a failed draft', 
   assert.ok(r.warnings.some(w => /Kategorie/.test(w)));
 });
 
+test('lookupDraft: an expired session is NOT "Vinted does not know this category"', async () => {
+  // The search used to swallow every error, so a 401 came back out as an unresolvable
+  // category — a statement about Vinted's tree, made without Vinted having answered.
+  // Observed 2026-08-21: three picks in a row, three 401s, and the studio said nothing.
+  const taxonomy = fakeTaxonomy({
+    searchCatalogs: async () => { throw new AuthError('Vinted-Sitzung abgelaufen.'); }
+  });
+  await assert.rejects(
+    () => lookupDraft({ analysis: analysis({ type: 'Hoodie' }), taxonomy }),
+    AuthError
+  );
+});
+
 test('lookupDraft: a taxonomy without the search member is fine — nothing throws', async () => {
   const taxonomy = fakeTaxonomy();
   delete taxonomy.searchCatalogs;
   const r = await lookupDraft({ analysis: analysis({ type: 'Hoodie' }), taxonomy });
   assert.equal(r.resolved.catalog.id, null);
+});
+
+// ---------- the condition keeps its provenance ----------
+
+test('lookupDraft: a kept proposal stays the recognition\'s, not the user\'s', async () => {
+  // Aus dem Log vom 2026-08-21: `conditionFrom: "ai"`, dann wurde eine Kategorie gewählt,
+  // und ohne dass jemand den Zustand angefasst hätte stand dort `conditionFrom: "user"`.
+  // Mit der Herkunft verschwindet der Hinweis unter dem Feld — und der ist der Unterschied
+  // zwischen einem begründeten Vorschlag und einem unerklärten „Gut" (§7.5).
+  const r = await lookupDraft({
+    analysis: analysis(),
+    taxonomy: fakeTaxonomy(),
+    condition: 3,
+    conditionMeta: { source: 'ai', evidence: 'Pilling an den Ärmeln' }
+  });
+  assert.equal(r.condition.id, 3);
+  assert.equal(r.condition.source, 'ai');
+  assert.equal(r.condition.evidence, 'Pilling an den Ärmeln');
+});
+
+test('lookupDraft: without a known provenance a kept condition counts as the user\'s', async () => {
+  const r = await lookupDraft({ analysis: analysis(), taxonomy: fakeTaxonomy(), condition: 3 });
+  assert.equal(r.condition.source, 'user');
+  assert.equal(r.condition.evidence, null);
+});
+
+test('lookupDraft: a condition the list no longer offers is re-chosen, provenance and all', async () => {
+  // Die Herkunft darf nicht an einer ID kleben, die es gar nicht mehr gibt.
+  const r = await lookupDraft({
+    analysis: analysis(),
+    taxonomy: fakeTaxonomy(),
+    condition: 999,
+    conditionMeta: { source: 'ai', evidence: 'Pilling an den Ärmeln' },
+    settings: { draftConditionDefault: 'very_good' }
+  });
+  assert.equal(r.condition.id, 2, 'Vinteds „Sehr gut"');
+  assert.equal(r.condition.source, 'default');
+});
+
+// ---------- the colour always has a way out ----------
+
+test('lookupDraft: an unresolvable colour offers Vinteds whole list', () => {
+  // Ohne ID ist die Farbe ein Blocker. Für die Kategorie sind Suche und Textfeld der
+  // Ausweg; die Farbe hat beides nicht — ein getipptes Wort wird hier nicht aufgelöst.
+  // Also muss die Liste selbst der Ausweg sein, sonst ist der Draft eingesperrt.
+  return lookupDraft({ analysis: analysis({ colors: ['Petrol'] }), taxonomy: fakeTaxonomy(), condition: 2 })
+    .then(r => {
+      assert.equal(r.resolved.color.id, null);
+      assert.deepEqual(r.resolved.color.candidates.map(c => c.id), COLORS.map(c => c.id));
+    });
+});
+
+test('lookupDraft: a colour that DID resolve is not buried under 29 alternatives', async () => {
+  const r = await lookupDraft({ analysis: analysis(), taxonomy: fakeTaxonomy(), condition: 2 });
+  assert.equal(r.resolved.color.id, 27);
+  assert.deepEqual(r.resolved.color.candidates, []);
 });
 
 // ---------- the typed category ----------

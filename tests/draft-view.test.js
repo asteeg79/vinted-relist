@@ -61,10 +61,14 @@ function ready(overrides = {}) {
   return {
     analysis: analysis(),
     settings: DEFAULT_SETTINGS,
-    // ONLY the catalog. Brand, size and colour are deliberately left unresolved so the
-    // tests around them keep exercising the model's own confidences — and because those
-    // three are nullable in the payload, an id is not what makes a draft ready.
-    resolved: { catalog: { id: 1806, label: 'Hoodie', confidence: 1, candidates: [] } },
+    // Der Katalog UND die Farbe — die beiden, deren Wert ohne Vinteds ID nichts wert ist
+    // (`NEEDS_ID`). Marke und Größe bleiben absichtlich unaufgelöst, damit die Tests um
+    // sie herum weiter die Konfidenzen des Modells prüfen; beide sind in der Payload
+    // nullbar, eine ID ist dort nicht das, was einen Draft fertig macht.
+    resolved: {
+      catalog: { id: 1806, label: 'Hoodie', confidence: 1, candidates: [] },
+      color: { id: 1, label: 'Schwarz', confidence: 1, candidates: [] }
+    },
     price: { value: 18, source: 'range' },
     condition: 2,
     // Vinteds own list, as `taxonomy.conditions` returns it. The ids are the measured ones.
@@ -158,6 +162,61 @@ test('draftView: an ambiguous brand IS confirmable — only the category needs a
     { confirmations: { condition: true, brand: true } }
   ));
   assert.equal(state(view, 'brand'), FIELD_OK);
+  assert.equal(view.canPublish, true);
+});
+
+// ---------- the colour needs an id too, and a conflict is not confirmable ----------
+
+test('draftView: a colour Vinted disagreed about cannot be confirmed away', () => {
+  // Der Trockenlauf vom 2026-08-21: die Gegenprobe widerspricht bei der Farbe, `crossCheck`
+  // leert das Feld und bietet beide Antworten an — das Feld zeigt aber weiter „Blau". Ein
+  // Klick auf „Passt" gab damit ein Inserat mit `color_ids: []` frei. Genau der Zwang zur
+  // Neuauswahl, wegen dem die Farbe ein Blocker ist, ließ sich wegklicken.
+  const view = draftView(readyWith(
+    {
+      color: {
+        id: null, label: 'Blau', confidence: 0, agreed: false, source: 'conflict',
+        candidates: [{ id: 9, label: 'Blau' }, { id: 17, label: 'Türkis' }]
+      }
+    },
+    { confirmations: { condition: true, color: true } }
+  ));
+  const f = field(view, 'color');
+  assert.equal(f.state, FIELD_MISSING, 'bestätigen kann keine ID herbeischaffen');
+  assert.equal(f.id, null);
+  assert.equal(view.canPublish, false);
+});
+
+test('draftView: the conflict note names both answers, and does not call Blau a non-colour', () => {
+  const view = draftView(readyWith({
+    color: {
+      id: null, label: 'Blau', confidence: 0, agreed: false, source: 'conflict',
+      candidates: [{ id: 9, label: 'Blau' }, { id: 17, label: 'Türkis' }]
+    }
+  }));
+  const note = field(view, 'color').note;
+  assert.match(note, /Blau oder Türkis/);
+  assert.doesNotMatch(note, /keine Vinted-Farbe/, 'Blau IST eine Vinted-Farbe — Vinted sieht nur etwas anderes');
+});
+
+test('draftView: a colour Vinted does not know says so in its own words', () => {
+  const view = draftView(readyWith({
+    color: { id: null, label: 'Petrol', confidence: 0, candidates: [{ id: 9, label: 'Blau' }] }
+  }));
+  assert.match(field(view, 'color').note, /keine Vinted-Farbe/);
+});
+
+test('draftView: brand and size stay confirmable — only category and colour need an id', () => {
+  // Beide sind in der Payload nullbar, Vinted nimmt sogar eine Freitext-Marke.
+  const view = draftView(readyWith(
+    {
+      brand: { id: null, label: 'Nike', confidence: 0.99, candidates: [] },
+      size: { id: null, label: 'M', confidence: 0.99, candidates: [] }
+    },
+    { confirmations: { condition: true, brand: true, size: true } }
+  ));
+  assert.equal(state(view, 'brand'), FIELD_OK);
+  assert.equal(state(view, 'size'), FIELD_OK);
   assert.equal(view.canPublish, true);
 });
 
@@ -386,7 +445,10 @@ test('draftView: the title uses the article\'s name, not Vinted\'s filing label'
   // and the title became "Superdry Einfarbige T-Shirts M Blau". Resolving the category
   // made the title worse — plural, with a taxonomy qualifier nobody writes in a headline.
   const view = draftView(readyWith(
-    { catalog: { id: 1806, label: 'Einfarbige T-Shirts', confidence: 1, candidates: [] } },
+    {
+      catalog: { id: 1806, label: 'Einfarbige T-Shirts', confidence: 1, candidates: [] },
+      color: { id: 9, label: 'Blau', confidence: 1, candidates: [] }
+    },
     { analysis: analysis({ brand: 'Superdry', type: 'T-Shirt', colors: ['Blau'] }) }
   ));
   assert.equal(view.title, 'Superdry T-Shirt M Blau');

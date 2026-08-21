@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readHeaders, createVintedFetch } from '../lib/vinted-read.js';
-import { ApiError, ValidationError } from '../lib/errors.js';
+import { readHeaders, createVintedFetch, SESSION_EXPIRED } from '../lib/vinted-read.js';
+import { ApiError, AuthError, ValidationError } from '../lib/errors.js';
 
 const AUTH = { csrf: 'csrf-token', anonId: 'anon-id' };
 const ensureAuth = async () => AUTH;
@@ -106,4 +106,20 @@ test('fetchJson: caller headers may add, and win on a collision', async () => {
   assert.equal(headers['Accept'], 'text/plain');
   assert.equal(headers['X-Extra'], '1');
   assert.equal(headers['X-Requested-With'], 'XMLHttpRequest', 'the rest survives');
+});
+
+test('fetchJson: a 401 is the expired session, and says what to do about it', async () => {
+  // Measured 2026-08-21: with a Vinted tab open every read answers 200; four hours without
+  // one, all three lookups answer `401 {"code":100,"message_code":"invalid_authentication_
+  // token"}` — and opening vinted.de fixes it on the spot. The user is still logged in, so
+  // `HTTP 401: {"code":100,…}` on screen sends them looking in the wrong place.
+  const fetchImpl = fakeFetch({ status: 401, body: '{"code":100,"message_code":"invalid_authentication_token"}' });
+  const fetchJson = createVintedFetch({ domain: 'www.vinted.de', ensureAuth, fetchImpl });
+
+  await assert.rejects(() => fetchJson('/api/v2/item_upload/brands?category_id=1806'), err => {
+    assert.ok(err instanceof AuthError, 'not a generic ApiError — this one the user can fix');
+    assert.equal(err.message, SESSION_EXPIRED);
+    assert.match(err.message, /vinted\.de/, 'the remedy is named, not implied');
+    return true;
+  });
 });

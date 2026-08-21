@@ -220,6 +220,63 @@ Blätter haben `catalogs: []`. Der Baum trägt **keine** Größengruppe — die 
 Kategorie und wird einzeln geholt. Das ist die Reihenfolge aus §6.2 des Konzepts, von
 Vinted selbst erzwungen: erst Kategorie, dann die dafür gültige Größenmenge.
 
+**Nachtrag 2026-08-21 — auch die Farbe braucht eine ID, und ein Widerspruch ist nicht bestätigbar.**
+
+Derselbe Fehler wie bei der Kategorie, von der anderen Seite. Widerspricht die Gegenprobe
+bei der Farbe, leert `crossCheck` das Feld und bietet beide Antworten an — das Feld zeigt
+aber weiter „Blau", stand auf `needs_confirmation`, und **ein Klick auf „Passt" gab das
+Veröffentlichen frei**. Heraus kam ein Inserat mit `color_ids: []` und `color1_id: null`.
+Damit ließ sich genau der Zwang zur Neuauswahl wegklicken, wegen dem die Farbe überhaupt
+ein Blocker ist.
+
+`NEEDS_ID` ist deshalb keine Menge mehr, sondern eine Zuordnung Feld → Wort, und die Farbe
+steht darin. Marke und Größe bleiben draußen: beide sind in der Payload nullbar, Vinted
+nimmt sogar eine Freitext-Marke.
+
+Zwei Folgeänderungen, ohne die das eine Sackgasse wäre:
+
+- **Ein Blocker braucht einen Ausweg.** Die Kategorie hat Suche und Textfeld; die Farbe hat
+  beides nicht — ein getipptes Wort wird für sie gar nicht aufgelöst. `lookup.js` bietet
+  deshalb Vinteds ganze Farbliste als Auswahl an, wenn nichts passt. 29 Einträge sind ein
+  Auswahlfeld, keine Zumutung.
+- **Der Hinweis muss die beiden Lagen unterscheiden.** „„Blau" ist keine Vinted-Farbe" wäre
+  bei einem Widerspruch schlicht falsch — Blau *ist* eine Vinted-Farbe, Vinted sieht auf den
+  Fotos nur eine andere. Der Konflikt sagt jetzt „Vinted sieht auf den Fotos etwas anderes:
+  Blau oder Türkis — bitte unten entscheiden".
+
+Dazu: `publish_suggestions` protokolliert jetzt auch die Farb-IDs. Bisher stand dort nur
+`{categories, brands}`, und zu einem `publish_conflict {"blockers":["Farbe bestätigen"]}`
+ließ sich nirgends nachlesen, was Vinted stattdessen gesehen hatte.
+
+**Nachtrag 2026-08-21 — der 401 ist die abgelaufene Sitzung, nicht die fehlende Kategorie.**
+
+Symptom: eine Kategorie im Studio auswählen tut nichts Sichtbares, und es kommt kein
+Preisvorschlag mehr. Im Log dreimal `studio_lookup_failed {"status":401,
+"message_code":"invalid_authentication_token"}`.
+
+Der Befund: Vinteds Sitzungs-Cookie ist kurzlebig und wird von der SPA nachgezogen, solange
+irgendwo ein Vinted-Tab offen ist. Ohne offenen Tab altert es weg — und dann antwortet jeder
+Lesezugriff aus dem Studio mit 401, obwohl der Nutzer angemeldet ist und vinted.de im
+Browser normal funktioniert. Gemessen am selben Tag: 08:12 mit offenem Tab alle Lesezugriffe
+200, 12:01 ohne Tab dreimal 401, nach dem Öffnen von vinted.de sofort wieder 200 (geprüft
+für `brands`, `conditions`, `catalogs/search`). Ein veralteter oder erfundener
+`X-CSRF-Token` löst den 401 **nicht** aus — die GETs beantworten ihn auch mit Unsinn im
+Header mit 200.
+
+Das ist die Kehrseite der Spike-Erkenntnis „Lesen geht ohne offenen Vinted-Tab": es geht
+ohne Tab, aber nicht ohne frische Sitzung. Drei Änderungen:
+
+1. **`vinted-read.js`** wirft bei 401 einen `AuthError` mit `SESSION_EXPIRED` — einem Satz,
+   der die Abhilfe nennt, statt `HTTP 401: {"code":100,…}`, das den Nutzer an der falschen
+   Stelle suchen lässt.
+2. **`lookup.js#searchCatalog`** verschluckte bisher *jeden* Fehler und gab `null` zurück.
+   Ein 401 kam damit als „„T-Shirt" ist keine Vinted-Kategorie" heraus — eine Auskunft über
+   Vinteds Baum, ohne dass Vinted geantwortet hätte. Dieselbe Sorte stiller Fehlschlag wie
+   die 200-mit-leerer-Liste bei den Größen. Ein `AuthError` fliegt jetzt durch.
+3. **`studio.js`** gibt `runLookup()` die Fehlermeldung zurück, und jeder Aufrufer schreibt
+   sie in die Statuszeile. Vorher landete sie nur in der Hinweisliste am Seitenende — bei
+   einem Klick auf eine Kategorie sah das aus, als sei nichts passiert.
+
 **Nachtrag 2026-08-21 — die Sendungsgröße liegt woanders, und die Pflichtfelder sind keine.**
 
 Zwei Löcher in der Payload, beide gemessen statt vermutet — im laufenden `/items/new`, mit
@@ -540,10 +597,17 @@ Kein Build-Step — die Extension wird als „entpackte Erweiterung" geladen.
 
 ```bash
 npm run validate   # manifest.json, JS-Syntax, ESM-Import-Graph (mit chrome/DOM-Stub)
-npm test           # node:test Suite (86 Tests)
+npm test           # node:test Suite
 npm run coverage   # Coverage-Report
 npm run check      # validate + test
 ```
+
+**`npm run coverage`, nicht `npx c8`.** Der Skript-Weg nutzt die eingebaute Abdeckung von
+`node:test` und schreibt nichts auf die Platte. `c8` legt pro Lauf V8-Rohdaten in
+`coverage/tmp/` ab und räumt sie nie weg — nach ein paar Läufen sind das 16 MB. Der Ordner
+ist zwar in `.gitignore`, aber die Erweiterung wird **entpackt** geladen: Chrome zeigt in
+`chrome://extensions` die Größe des ganzen Ordners an, und aus 2 MB werden so 18 MB.
+Aufräumen: `rm -rf coverage`.
 
 **Coverage-Strategie:** Reine + Storage-Module via In-Memory-chrome-Mock
 (`tests/helpers/chrome-mock.js`) auf ~98–100 %. Nicht unit-getestet (per Browser

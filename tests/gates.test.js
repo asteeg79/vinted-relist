@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   gatesFor, describeOutcome, describeFailure,
-  GATE_FIRST_RUN, GATE_COOLDOWN, GATE_INTEREST, draftGatesFor, describeDraftOutcome, GATE_FIRST_CREATE } from '../lib/gates.js';
+  GATE_FIRST_RUN, GATE_COOLDOWN, GATE_INTEREST, draftGatesFor, describeDraftOutcome, GATE_FIRST_CREATE,
+  draftStageNote } from '../lib/gates.js';
 import { DEFAULT_SETTINGS } from '../lib/settings.js';
 
 const settings = (patch = {}) => ({ ...DEFAULT_SETTINGS, ...patch });
@@ -240,4 +241,36 @@ test('describeDraftOutcome: a real listing carries its link', () => {
   assert.equal(m.kind, 'ok');
   assert.equal(m.newId, 7);
   assert.match(m.text, /Nike Hoodie M/);
+});
+
+// ---------- das Schild oben rechts ----------
+//
+// Es stand als fester Text im HTML und behauptete „Stufe 1 — kein Kontakt zu Vinted",
+// während die Seite Kategorien auflöste, Preise holte und Fotos hochlud.
+
+test('draftStageNote: ohne Erkennung ist wirklich noch kein Kontakt', () => {
+  const note = draftStageNote({ settings: { draftCreateEnabled: false }, hasAnalysis: false });
+  assert.equal(note.kind, 'idle');
+  assert.match(note.text, /Stufe 1/);
+});
+
+test('draftStageNote: sobald nachgeschlagen wird, ist es Stufe 3 im Trockenlauf', () => {
+  const note = draftStageNote({ settings: { draftCreateEnabled: false }, hasAnalysis: true });
+  assert.equal(note.kind, 'dry');
+  assert.match(note.text, /Trockenlauf/);
+  assert.doesNotMatch(note.text, /Stufe 1/);
+});
+
+test('draftStageNote: scharf ist scharf, auch ohne Erkennung', () => {
+  // Die Einstellung entscheidet, nicht der Fortschritt: wer die Seite mit ausgeschaltetem
+  // Trockenlauf öffnet, muss das sofort sehen und nicht erst nach der Erkennung.
+  for (const hasAnalysis of [false, true]) {
+    const note = draftStageNote({ settings: { draftCreateEnabled: true }, hasAnalysis });
+    assert.equal(note.kind, 'live');
+    assert.match(note.text, /scharf/);
+  }
+});
+
+test('draftStageNote: ohne Argumente bleibt es bei der harmlosesten Aussage', () => {
+  assert.equal(draftStageNote().kind, 'idle');
 });

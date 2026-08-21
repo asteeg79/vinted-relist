@@ -556,8 +556,12 @@ analog zum First-Run-Gate beim Löschen, mit `remember: true`.
 **Fehlgeschlagener Create nach erfolgtem Foto-Upload (Entscheidung 12).** Wird als
 normaler Fehler behandelt; ein Wiederholungsversuch lädt alles neu hoch mit frischer
 `temp_uuid`. Fotos, die nie an einen Artikel gebunden wurden, hängen an einer temporären
-Session und tauchen im Konto vermutlich nicht auf — **Annahme, nicht verifiziert**, so
-auch zu dokumentieren. Wächter: Nach dem zweiten Fehlversuch für denselben Draft warnt
+Session und tauchen im Konto nicht auf — **verifiziert am 2026-08-21**, nach rund dreißig
+verwaisten Uploads aus den Trockenläufen: der Kleiderschrank zeigt nur „Aktiv" und
+„Verkauft" und keinen Entwurfs-Reiter, `/items/new` öffnet leer statt einen Entwurf
+fortzusetzen, und Entwurfs-Endpunkte (`/api/v2/item_upload/drafts`, `/api/v2/drafts`)
+gibt es nicht. Damit kostet ein zweiter Upload-Durchgang Zeit und Datenvolumen, aber er
+hinterlässt nichts, was aufzuräumen wäre. Wächter: Nach dem zweiten Fehlversuch für denselben Draft warnt
 das Studio, statt einen dritten Upload-Schwall loszuschicken. Wiederholtes Hochladen
 identischer Bilder ist genau das Muster, gegen das die Anti-Bot-Hygiene sonst arbeitet.
 
