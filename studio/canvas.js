@@ -50,9 +50,16 @@ const AI_QUALITY = 0.92;
  * of the article, and the model can. Refused if the box is implausible — then the first
  * pass's result stands (see `modelBoxVerdict`).
  *
- * Returns { url, blob, base64, mediaType, width, height, mode, reason, touchesEdge,
- * frame, boxSource, modelUrl, modelWidth, modelHeight, modelBytes, stats }.
- * `url` and `modelUrl` are object URLs — the caller revokes them.
+ * Returns { url, blob, mediaType, width, height, mode, reason, touchesEdge, frame,
+ * boxSource, boxReason, stats } plus, im ersten Durchgang, { modelBase64, modelUrl,
+ * modelWidth, modelHeight, modelBytes }. `url` und `modelUrl` sind Object-URLs — der
+ * Aufrufer gibt sie frei.
+ *
+ * IM ZWEITEN DURCHGANG ENTFÄLLT DIE MODELLKOPIE. Sie ist das ganze Foto in Originallage,
+ * hängt also an keiner Zuschnitt-Entscheidung: erneut zu zeichnen und mit q=0.92 zu
+ * kodieren ergäbe Byte für Byte dasselbe Bild — pro Foto ein voller Decode, ein Encode und
+ * eine base64-Kodierung von ~800 KB, für nichts. Der Aufrufer behält die aus dem ersten
+ * Durchgang.
  */
 export async function prepare(file, options = {}) {
   // `from-image` is the whole point for phone photos: it applies the EXIF orientation to
@@ -84,6 +91,24 @@ export async function prepare(file, options = {}) {
     const canvas = compose(bitmap, frame, target.w, target.h, fill);
     const blob = await toBlob(canvas, QUALITY);
 
+    // Der zweite Durchgang braucht sie nicht — siehe oben.
+    if (options.modelBox) {
+      return {
+        url: URL.createObjectURL(blob),
+        blob,
+        mediaType: 'image/jpeg',
+        width: target.w,
+        height: target.h,
+        mode: frame.mode,
+        reason: frame.reason,
+        touchesEdge: frame.touchesEdge,
+        frame,
+        boxSource: verdict.box ? 'model' : 'heuristic',
+        boxReason: verdict.reason,
+        stats: { ...found.stats, fillPct: Math.round((box.w * box.h * 100) / (bitmap.width * bitmap.height)) }
+      };
+    }
+
     // The model copy: THE WHOLE PHOTO, uncropped.
     //
     // It used to be the finished listing image, and that was the bug behind "die Größe
@@ -101,8 +126,16 @@ export async function prepare(file, options = {}) {
 
     return {
       url: URL.createObjectURL(blob),
+      // Das Inseratsbild. NICHT base64 — das wird erst beim Veröffentlichen kodiert, aus
+      // genau diesem Blob. Solange die beiden Kopien sich ein Feld namens `base64`
+      // teilten, hing an einem Namen, welche von beiden bei Vinted landet: es war die
+      // Modellkopie, also das ungeschnittene Foto. Der ganze Zuschnitt — Heuristik,
+      // Artikelbox des Modells, zweiter Durchgang — kam nie am Inserat an. Sichtbar wurde
+      // das erst am ersten echten Inserat, auf dem die Füße des Fotografen standen,
+      // obwohl Vorschau und Download das Bild ohne sie zeigten.
       blob,
-      base64: arrayBufferToBase64(await modelBlob.arrayBuffer()),
+      // Die Modellkopie, fertig kodiert: sie geht sofort danach an die Erkennung.
+      modelBase64: arrayBufferToBase64(await modelBlob.arrayBuffer()),
       mediaType: 'image/jpeg',
       width: target.w,
       height: target.h,

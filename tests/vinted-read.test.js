@@ -63,16 +63,52 @@ test('fetchJson: a POST carries its body and its content type', async () => {
   assert.equal(init.headers['Content-Type'], 'application/json');
 });
 
-test('fetchJson: the auth bundle is fetched per call, so a rotated token is picked up', async () => {
+test('fetchJson: das Auth-Bündel wird eine Minute lang wiederverwendet', async () => {
+  // `ensureAuth` kostet sechs Cookie-Zugriffe, zwei Storage-Lesevorgänge und einen
+  // Schreibvorgang. Ein Nachschlagen macht rund sechs Anfragen, und das Studio schlägt bei
+  // jeder Änderung erneut nach — pro Aufruf neu anzumelden hieß ~36 Cookie-Zugriffe für
+  // eine Antwort, die sich in der Zeit nicht ändert.
   let calls = 0;
   const rotating = async () => ({ csrf: 'csrf-' + (++calls), anonId: 'a' });
   const fetchImpl = fakeFetch();
-  const fetchJson = createVintedFetch({ domain: 'www.vinted.de', ensureAuth: rotating, fetchImpl });
+  let clock = 0;
+  const fetchJson = createVintedFetch({ domain: 'www.vinted.de', ensureAuth: rotating, fetchImpl, now: () => clock });
 
   await fetchJson('/a');
   await fetchJson('/b');
-  assert.equal(fetchImpl.calls[0].init.headers['X-CSRF-Token'], 'csrf-1');
-  assert.equal(fetchImpl.calls[1].init.headers['X-CSRF-Token'], 'csrf-2');
+  assert.equal(calls, 1, 'zweimal dieselbe Anmeldung');
+  assert.equal(fetchImpl.calls[1].init.headers['X-CSRF-Token'], 'csrf-1');
+
+  clock = 60_001;
+  await fetchJson('/c');
+  assert.equal(calls, 2, 'nach einer Minute wieder frisch');
+  assert.equal(fetchImpl.calls[2].init.headers['X-CSRF-Token'], 'csrf-2');
+});
+
+test('fetchJson: ein 401 wird EINMAL mit frischer Anmeldung wiederholt', async () => {
+  // Ein zwischengespeichertes Bündel kann veraltet sein, und ein veralteter Token sieht
+  // aus wie eine abgelaufene Sitzung. Erst der zweite 401 ist einer.
+  let calls = 0;
+  const rotating = async () => ({ csrf: 'csrf-' + (++calls), anonId: 'a' });
+  let answers = 0;
+  const fetchImpl = async (url, init) => {
+    fetchImpl.calls.push({ url, init });
+    const status = ++answers === 1 ? 401 : 200;
+    return { ok: status === 200, status, text: async () => '{"code":0}' };
+  };
+  fetchImpl.calls = [];
+
+  const fetchJson = createVintedFetch({ domain: 'www.vinted.de', ensureAuth: rotating, fetchImpl });
+  assert.deepEqual(await fetchJson('/a'), { code: 0 });
+  assert.equal(fetchImpl.calls.length, 2, 'genau ein zweiter Versuch');
+  assert.equal(fetchImpl.calls[1].init.headers['X-CSRF-Token'], 'csrf-2', 'und der mit frischem Token');
+});
+
+test('fetchJson: zwei 401 hintereinander sind die abgelaufene Sitzung, kein drittes Mal', async () => {
+  const fetchImpl = fakeFetch({ status: 401, body: '{"code":100}' });
+  const fetchJson = createVintedFetch({ domain: 'www.vinted.de', ensureAuth, fetchImpl });
+  await assert.rejects(() => fetchJson('/a'), AuthError);
+  assert.equal(fetchImpl.calls.length, 2, 'einmal wiederholt, dann aufgegeben');
 });
 
 test('fetchJson: a non-2xx is an ApiError carrying the status', async () => {

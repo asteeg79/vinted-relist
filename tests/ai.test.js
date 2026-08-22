@@ -120,6 +120,18 @@ test('buildAnalysisRequest: the prompt says WHERE size labels sit, not just to r
   assert.match(body.system, /ZEICHENGETREU/, 'no unit conversion, no tidying up');
 });
 
+test('buildAnalysisRequest: the box is the ANSWER to the distractions, not a second opinion', () => {
+  // Im ersten echten Inserat (2026-08-21) standen unten weiterhin die Füße des
+  // Fotografen im Bild — das Modell hatte sie benannt UND die Box benutzt. Beide Felder
+  // sprachen nur nicht miteinander: der Prompt verlangte eine „großzügige" Box und sagte
+  // nirgends, dass das Genannte draußen zu liegen hat.
+  const body = buildAnalysisRequest(IMAGES, { settings: DEFAULT_SETTINGS });
+  assert.match(body.system, /AUSSERHALB der\s+Box/);
+  assert.match(body.system, /untere Kante/, 'sagt, was zu tun ist, nicht nur was falsch wäre');
+  assert.match(body.system, /Artikel Vorrang/, 'berührt die Störung den Artikel, gewinnt der Artikel');
+  assert.doesNotMatch(body.system, /GANZ und großzügig/, 'die alte Formel lud genau dazu ein');
+});
+
 test('buildAnalysisRequest: the condition is judged by Vinted\'s own definitions', () => {
   const body = buildAnalysisRequest(IMAGES, { settings: DEFAULT_SETTINGS });
   for (const c of CONDITIONS) {

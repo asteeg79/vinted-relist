@@ -446,19 +446,84 @@ input[type="range"]::-webkit-slider-thumb {
 .setting-input:focus,
 .setting-textarea:focus { outline: none; border-color: var(--teal); }
 
-.key-actions {
+/* ---------- KI-Zugang ----------
+   Eine Karte statt einer Reihe loser Felder: der Abschnitt hat drei Lagen (nichts
+   hinterlegt / gesperrt / entsperrt) und in jeder genau einen Weg. */
+.key-panel {
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fff;
+}
+
+.key-head {
   display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: 8px;
+  margin-bottom: 4px;
+}
+
+.key-head strong { font-size: 12.5px; }
+
+.key-badge {
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 2px 8px;
+  color: var(--ink-3);
+  background: var(--bg-soft);
+}
+
+.key-badge.is-ok { color: var(--ok-fg); background: var(--ok-bg); }
+.key-badge.is-warn { color: var(--warn-fg); background: var(--warn-bg); }
+
+.key-panel .setting-input[hidden] { display: none; }
+
+.key-action {
+  width: 100%;
   margin-top: 8px;
 }
+
+.key-links {
+  display: flex;
+  gap: 12px;
+  margin-top: 6px;
+}
+
+.key-links .btn-link[hidden] { display: none; }
+
+/* Ein Feld, das nur für Screenreader beschriftet ist — die Platzhalter tragen die
+   sichtbare Beschriftung, und zwei Zeilen Label über zwei Feldern wären hier Lärm. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* Der eine Schalter, der etwas öffentlich macht. */
+.setting-row.is-emphasis {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fff;
+  padding: 10px;
+  margin-top: 10px;
+}
+
+.setting-hint.is-live { color: var(--err-fg); font-weight: 600; }
 
 /* Key/passphrase feedback — same colours the status line uses. */
 .key-status {
   font-size: 10.5px;
   margin-top: 6px;
   color: var(--ink-3);
-  min-height: 13px;
 }
+
+.key-status[hidden] { display: none; }
 
 .key-status.ok { color: var(--ok-fg); }
 .key-status.error { color: var(--err-fg); }

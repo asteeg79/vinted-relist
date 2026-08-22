@@ -50,9 +50,9 @@ body {
   padding: 4px 12px;
 }
 
-/* Der scharfe Lauf sieht anders aus als der Trockenlauf — das Schild ist die Stelle, an
-   der man nachsieht, bevor man auf „Veröffentlichen" drückt. */
-.stage-note.is-dry { color: var(--warn-fg); background: var(--warn-bg); }
+/* Der scharfe Lauf sieht anders aus als der Testlauf — das Schild ist die Stelle, an der
+   man nachsieht, bevor man auf „Veröffentlichen" drückt. */
+.stage-note.is-dry { color: var(--ink-2); background: var(--bg-soft); }
 .stage-note.is-live { color: var(--err-fg); background: var(--err-bg); }
 
 /* ---------- Layout ---------- */

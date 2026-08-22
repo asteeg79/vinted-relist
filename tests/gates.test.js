@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   gatesFor, describeOutcome, describeFailure,
   GATE_FIRST_RUN, GATE_COOLDOWN, GATE_INTEREST, draftGatesFor, describeDraftOutcome, GATE_FIRST_CREATE,
-  draftStageNote } from '../lib/gates.js';
+  publishModeNote } from '../lib/gates.js';
 import { DEFAULT_SETTINGS } from '../lib/settings.js';
 
 const settings = (patch = {}) => ({ ...DEFAULT_SETTINGS, ...patch });
@@ -232,7 +232,7 @@ test('draftGatesFor: every gate has the shape both UIs render', () => {
 test('describeDraftOutcome: a dry run is neither success nor failure', () => {
   const m = describeDraftOutcome({ dryRun: true, payload: {} });
   assert.equal(m.kind, 'warning');
-  assert.match(m.text, /Trockenlauf/);
+  assert.match(m.text, /Testlauf/);
   assert.equal(m.newId, undefined);
 });
 
@@ -246,31 +246,41 @@ test('describeDraftOutcome: a real listing carries its link', () => {
 // ---------- das Schild oben rechts ----------
 //
 // Es stand als fester Text im HTML und behauptete „Stufe 1 — kein Kontakt zu Vinted",
-// während die Seite Kategorien auflöste, Preise holte und Fotos hochlud.
+// während die Seite Kategorien auflöste, Preise holte und Fotos hochlud. Die Stufen sind
+// seit 0.91.0 ganz weg: sie sind eine Entwicklungslandkarte und beantworten nicht, was
+// der nächste Klick bewirkt.
 
-test('draftStageNote: ohne Erkennung ist wirklich noch kein Kontakt', () => {
-  const note = draftStageNote({ settings: { draftCreateEnabled: false }, hasAnalysis: false });
-  assert.equal(note.kind, 'idle');
-  assert.match(note.text, /Stufe 1/);
-});
-
-test('draftStageNote: sobald nachgeschlagen wird, ist es Stufe 3 im Trockenlauf', () => {
-  const note = draftStageNote({ settings: { draftCreateEnabled: false }, hasAnalysis: true });
+test('publishModeNote: der Testlauf sagt, dass kein INSERAT entsteht — nicht, dass nichts passiert', () => {
+  // Der Testlauf lädt jedes Foto zu Vinted hoch und fragt dort die Erkennung; nur der
+  // Create unterbleibt. „bei Vinted entsteht nichts" wäre für jemanden, der wegen der
+  // Fotos zögert, eine falsche Zusicherung.
+  const note = publishModeNote({ settings: { draftCreateEnabled: false } });
   assert.equal(note.kind, 'dry');
-  assert.match(note.text, /Trockenlauf/);
-  assert.doesNotMatch(note.text, /Stufe 1/);
+  assert.match(note.text, /Testlauf/);
+  assert.match(note.button, /Testlauf/);
+  assert.match(note.hint, /Fotos gehen hoch/);
+  assert.match(note.hint, /Inserat entsteht nicht/);
 });
 
-test('draftStageNote: scharf ist scharf, auch ohne Erkennung', () => {
-  // Die Einstellung entscheidet, nicht der Fortschritt: wer die Seite mit ausgeschaltetem
-  // Trockenlauf öffnet, muss das sofort sehen und nicht erst nach der Erkennung.
-  for (const hasAnalysis of [false, true]) {
-    const note = draftStageNote({ settings: { draftCreateEnabled: true }, hasAnalysis });
-    assert.equal(note.kind, 'live');
-    assert.match(note.text, /scharf/);
+test('publishModeNote: scharf sagt, dass es öffentlich wird', () => {
+  const note = publishModeNote({ settings: { draftCreateEnabled: true } });
+  assert.equal(note.kind, 'live');
+  assert.match(note.text, /Scharf/);
+  assert.equal(note.button, 'Veröffentlichen');
+  assert.match(note.hint, /öffentlich/);
+});
+
+test('publishModeNote: keine Stufen mehr, in keinem Feld', () => {
+  for (const draftCreateEnabled of [false, true]) {
+    const note = publishModeNote({ settings: { draftCreateEnabled } });
+    for (const field of [note.text, note.button, note.hint]) {
+      assert.doesNotMatch(field, /Stufe/, `„Stufe" steht noch in: ${field}`);
+    }
   }
 });
 
-test('draftStageNote: ohne Argumente bleibt es bei der harmlosesten Aussage', () => {
-  assert.equal(draftStageNote().kind, 'idle');
+test('publishModeNote: ohne Argumente die harmloseste Aussage', () => {
+  // Die Oberfläche rendert, bevor die Einstellungen geladen sind. Solange darf dort nicht
+  // „scharf" stehen — und erst recht nicht umgekehrt.
+  assert.equal(publishModeNote().kind, 'dry');
 });

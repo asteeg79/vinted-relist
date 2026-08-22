@@ -165,6 +165,33 @@ test('draftView: an ambiguous brand IS confirmable — only the category needs a
   assert.equal(view.canPublish, true);
 });
 
+test('draftView: der Zustand kommt nie aus einem getippten Wort', () => {
+  // Toter Pfad, und einer mit Sprengkraft: über `overrides.condition` hätte ein Wort als
+  // `status_id` einreisen können. Der Zustand kommt aus einem Auswahlfeld mit Vinteds
+  // eigenen ids — sonst steht am Ende eine Stufe im Inserat, die Vinted nicht kennt.
+  const view = draftView(ready({ condition: 2, overrides: { condition: 'sehr gut' } }));
+  const f = field(view, 'condition');
+  assert.equal(f.id, 2);
+  assert.equal(f.value, 'Sehr gut', 'Vinteds Wort zur id, nicht das getippte');
+});
+
+// ---------- ein eingestelltes Inserat ist ein verbrauchter Draft ----------
+
+test('draftView: nach dem Einstellen blockt derselbe Draft — sonst gibt es das Stück zweimal', () => {
+  // Der Knopf war nach dem Erfolg sofort wieder aktiv: dieselben Fotos, derselbe Draft,
+  // ein zweites öffentliches Inserat — und ohne Gate, weil die Erst-Bestätigung gemerkt
+  // ist. Wer die Erfolgsmeldung übersieht, verkauft ein Stück zweimal.
+  const view = draftView(ready({ publishedId: 9733959264 }));
+  assert.equal(view.canPublish, false);
+  assert.ok(view.blockers.some(b => /9733959264/.test(b)), view.blockers.join(' | '));
+});
+
+test('draftView: ohne eingestelltes Inserat blockt nichts', () => {
+  for (const publishedId of [null, undefined]) {
+    assert.equal(draftView(ready({ publishedId })).canPublish, true);
+  }
+});
+
 // ---------- the colour needs an id too, and a conflict is not confirmable ----------
 
 test('draftView: a colour Vinted disagreed about cannot be confirmed away', () => {

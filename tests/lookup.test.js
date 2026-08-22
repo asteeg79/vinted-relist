@@ -386,6 +386,59 @@ test('lookupDraft: a taxonomy without the search member is fine — nothing thro
   assert.equal(r.resolved.catalog.id, null);
 });
 
+// ---------- ein Widerspruch überlebt das Nachschlagen ----------
+
+/** Die Farbe, wie `crossCheck` sie nach einem Widerspruch hinterlässt. */
+const CONFLICTED_COLOR = {
+  id: null, label: 'Marineblau', confidence: 0, agreed: false, source: 'conflict',
+  candidates: [{ id: 27, label: 'Marineblau' }, { id: 1, label: 'Schwarz' }]
+};
+
+test('lookupDraft: ein offener Farbkonflikt wird nicht wegaufgelöst', async () => {
+  // Beobachtet: Konflikt bei der Farbe, dann den ZUSTAND ändern — und der Blocker war weg,
+  // weil das Nachschlagen die Farbe wieder aus der Analyse auflöste. Veröffentlichen war
+  // wieder frei, alle Fotos gingen ein zweites Mal hoch, Vinted widersprach erneut.
+  const r = await lookupDraft({
+    analysis: analysis(), taxonomy: fakeTaxonomy(), condition: 2,
+    previous: { color: CONFLICTED_COLOR }
+  });
+  assert.equal(r.resolved.color.id, null, 'die Neuauflösung ist keine Entscheidung');
+  assert.equal(r.resolved.color.agreed, false);
+  assert.equal(r.resolved.color.candidates.length, 2, 'beide Antworten stehen weiter zur Wahl');
+});
+
+test('lookupDraft: eine Wahl beendet den Widerspruch', async () => {
+  const r = await lookupDraft({
+    analysis: analysis(), taxonomy: fakeTaxonomy(), condition: 2,
+    picks: { color: 1 },
+    previous: { color: CONFLICTED_COLOR }
+  });
+  assert.equal(r.resolved.color.id, 1, 'Schwarz, wie gewählt');
+  assert.notEqual(r.resolved.color.agreed, false);
+});
+
+test('lookupDraft: ein Kategoriekonflikt hält auch alles auf, was an ihr hängt', async () => {
+  // Ohne catalog_id gibt es keine Größenmenge, keine Markenliste und keinen Preis. Der
+  // Widerspruch muss deshalb VOR der Entscheidung über die Kategorie-ID stehen.
+  const r = await lookupDraft({
+    analysis: analysis(), taxonomy: fakeTaxonomy(), condition: 2,
+    previous: { catalog: { id: null, label: 'Hoodie', agreed: false, source: 'conflict', candidates: [{ id: 196, label: 'A' }, { id: 1807, label: 'B' }] } }
+  });
+  assert.equal(r.resolved.catalog.id, null);
+  assert.equal(r.price?.value ?? null, null, 'kein Preis ohne entschiedene Kategorie');
+  assert.ok(r.warnings.some(w => /Kategorie/.test(w)));
+});
+
+test('lookupDraft: ohne Widerspruch ändert previous gar nichts', async () => {
+  const before = await lookupDraft({ analysis: analysis(), taxonomy: fakeTaxonomy(), condition: 2 });
+  const after = await lookupDraft({
+    analysis: analysis(), taxonomy: fakeTaxonomy(), condition: 2,
+    previous: before.resolved
+  });
+  assert.deepEqual(after.resolved.color, before.resolved.color);
+  assert.equal(after.resolved.catalog.id, 196);
+});
+
 // ---------- the condition keeps its provenance ----------
 
 test('lookupDraft: a kept proposal stays the recognition\'s, not the user\'s', async () => {

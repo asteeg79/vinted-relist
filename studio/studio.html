@@ -11,9 +11,9 @@
       <h1>Studio</h1>
       <p class="subtitle">Aus Fotos wird ein Inserat</p>
     </div>
-    <!-- Text und Farbe kommen aus lib/gates.js#draftStageNote — hier steht nur der
-         Anfangszustand, bevor das erste render() gelaufen ist. -->
-    <div class="stage-note is-idle" id="stageNote">Stufe 1 — noch kein Kontakt zu Vinted</div>
+    <!-- Text und Farbe kommen aus lib/gates.js#publishModeNote — hier steht nur der
+         vorsichtigste Anfangszustand, bevor das erste render() gelaufen ist. -->
+    <div class="stage-note is-dry" id="stageNote">Testlauf — kein Inserat wird angelegt</div>
   </header>
 
   <main class="layout">
@@ -85,7 +85,7 @@
         <span class="spinner" aria-hidden="true"></span>
       </button>
       <p id="publishStatus" class="status" role="status" aria-live="polite"></p>
-      <p class="hint" id="publishHint">Trockenlauf: die Payload geht ins Log, es wird nichts eingestellt.</p>
+      <p class="hint" id="publishHint">Testlauf: Fotos gehen hoch, die Payload ins Log — ein Inserat entsteht nicht.</p>
 
       <!-- One box renders every gate; the copy comes from lib/gates.js. -->
       <div id="gateBox" class="warn-box" hidden>

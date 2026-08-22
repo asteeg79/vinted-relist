@@ -13,12 +13,13 @@
  * history list read the real lib/* modules rather than mirroring them.
  */
 import { getSettings, saveSettings, DEFAULT_DESCRIPTION_TEMPLATE, CONDITION_OPTIONS } from '../lib/settings.js';
-import { storeKey, unlockKey, hasStoredKey, readCachedKey, clearKey } from '../lib/secret.js';
+import { storeKey, unlockKey, hasStoredKey, readCachedKey, clearKey, describeKeyState } from '../lib/secret.js';
 import { parseUrl } from '../lib/item.js';
 import { PROGRESS_KEY } from '../lib/progress.js';
 import { LOG_KEY, clearLog } from '../lib/logger.js';
 import { getHistory, countWindows, clearHistory, HISTORY_KEY } from '../lib/history.js';
 import { resetConfirmedDelete } from '../lib/confirmation.js';
+import { publishModeNote } from '../lib/gates.js';
 
 const $ = id => document.getElementById(id);
 
@@ -282,6 +283,9 @@ $('clearHistory').addEventListener('click', async (e) => {
 
 // ---------- Settings view (simple two-screen toggle) ----------
 $('openSettings').addEventListener('click', async () => {
+  // Wer die Einstellungen neu öffnet, fängt beim Schlüssel von vorn an — sonst bliebe das
+  // Ersetzen-Formular stehen, und es gäbe keinen Weg zurück außer dem Popup zu schließen.
+  forceSetup = false;
   await loadSettingsIntoForm();
   $('viewMain').hidden = true;
   $('viewSettings').hidden = false;
@@ -316,6 +320,7 @@ async function loadSettingsIntoForm() {
   $('confidenceValue').textContent = confidence;
   $('setMinPrice').value = s.draftMinPrice;
   $('setTemplate').value = s.draftDescriptionTemplate;
+  renderDraftCreateHint();
   await refreshKeyStatus();
 }
 
@@ -387,6 +392,9 @@ $('resetConfirm').addEventListener('click', async (e) => {
 
 // ---------- Auto-listing settings ----------
 bindAutosave('setDraftCreate', () => ({ draftCreateEnabled: $('setDraftCreate').checked }));
+// Der Schalter, der als einziger entscheidet, ob etwas öffentlich wird — der Satz darunter
+// wechselt sofort mit, nicht erst beim nächsten Öffnen.
+$('setDraftCreate').addEventListener('change', renderDraftCreateHint);
 bindAutosave('setDraftLanguage', () => ({ draftLanguage: $('setDraftLanguage').value }));
 bindAutosave('setDraftCondition', () => ({ draftConditionDefault: $('setDraftCondition').value }));
 bindAutosave('setCropCheck', () => ({ cropCheckMode: $('setCropCheck').value }));
@@ -420,16 +428,60 @@ $('resetTemplate').addEventListener('click', async (e) => {
  * The key line says three different things, and the difference matters: no key yet, a key
  * that needs the passphrase for this browser session, or a key ready to use.
  */
-async function refreshKeyStatus() {
-  if (await readCachedKey()) return setKeyStatus('Key ist für diese Browser-Sitzung entsperrt.', 'ok');
-  if (await hasStoredKey()) return setKeyStatus('Key gespeichert — Passphrase eingeben und entsperren.', '');
-  setKeyStatus('Noch kein Key hinterlegt.', '');
+/**
+ * Der Schlüssel-Abschnitt — ein Weg je Lage.
+ *
+ * Vorher standen zwei Passwortfelder und zwei Knöpfe immer gleichzeitig da: wer einen Key
+ * eintrug, sah „Entsperren" (tut nichts), wer nur entsperren wollte, sah ein leeres
+ * Key-Feld und musste raten, ob es auszufüllen ist (nein). Welche Lage vorliegt und was
+ * sie anbietet, entscheidet `lib/secret.js#describeKeyState`; hier wird nur ein- und
+ * ausgeblendet.
+ *
+ * `forceSetup` ist der eine Fall, den der Zustand allein nicht hergibt: ein hinterlegter
+ * Schlüssel soll durch einen anderen ersetzt werden.
+ */
+let forceSetup = false;
+
+async function refreshKeyStatus(message = null, kind = '') {
+  const [unlocked, stored] = await Promise.all([readCachedKey(), hasStoredKey()]);
+  // `setup` ist der Wunsch des Nutzers und hängt an nichts sonst. Er war einmal
+  // `forceSetup && !unlocked` — und damit im häufigsten Fall (Schlüssel liegt da UND ist
+  // entsperrt) false, während `describeKeyState` gleichzeitig die gesperrte Ansicht
+  // bekam: Titel „KI ist gesperrt", Key-Feld versteckt, Knopf „Entsperren". Einen
+  // Schlüssel ersetzen ging dann nur nach einem Browser-Neustart.
+  const setup = forceSetup;
+  const view = describeKeyState({ stored: !!stored, unlocked: !!unlocked });
+
+  $('keyTitle').textContent = setup ? 'Anderen Schlüssel hinterlegen' : view.title;
+  $('keyHint').textContent = setup
+    ? 'Der neue Schlüssel ersetzt den gespeicherten, sobald du hier speicherst.'
+    : view.hint;
+
+  const badge = $('keyBadge');
+  badge.textContent = view.state === 'unlocked' ? 'entsperrt' : (view.state === 'locked' ? 'gesperrt' : '');
+  badge.className = 'key-badge' + (view.kind ? ' is-' + view.kind : '');
+  badge.hidden = !badge.textContent || setup;
+
+  $('setApiKey').hidden = !(setup || view.needsKey);
+  $('setPassphrase').hidden = !(setup || view.needsPassphrase);
+
+  const action = setup ? 'Schlüssel speichern & entsperren' : view.action;
+  $('keyAction').hidden = !action;
+  if (action) $('keyAction').textContent = action;
+  // Was der Knopf tut, hängt an der Lage — nicht daran, welchen von zweien man trifft.
+  $('keyAction').dataset.mode = (setup || view.state === 'empty') ? 'store' : 'unlock';
+
+  $('replaceKeyBtn').hidden = !(view.state !== 'empty' && !setup);
+  $('clearKeyBtn').hidden = view.state === 'empty';
+
+  setKeyStatus(message ?? '', kind);
 }
 
 function setKeyStatus(text, kind = '') {
   const el = $('keyStatus');
   el.className = 'key-status' + (kind ? ' ' + kind : '');
   el.textContent = text;
+  el.hidden = !text;
 }
 
 /** Clear both secret fields once they've been used — nothing lingers in the DOM. */
@@ -438,32 +490,41 @@ function clearKeyInputs() {
   $('setPassphrase').value = '';
 }
 
-$('saveKey').addEventListener('click', async () => {
+$('keyAction').addEventListener('click', async () => {
+  const store = $('keyAction').dataset.mode === 'store';
   try {
-    await storeKey($('setApiKey').value, $('setPassphrase').value);
+    if (store) await storeKey($('setApiKey').value, $('setPassphrase').value);
+    else await unlockKey($('setPassphrase').value);
     clearKeyInputs();
-    setKeyStatus('Gespeichert und entsperrt.', 'ok');
+    forceSetup = false;
+    await refreshKeyStatus(store ? 'Gespeichert und entsperrt.' : 'Entsperrt.', 'ok');
   } catch (e) {
-    setKeyStatus(e.message, 'error');
+    await refreshKeyStatus(e.message, 'error');
   }
 });
 
-$('unlockKeyBtn').addEventListener('click', async () => {
-  try {
-    await unlockKey($('setPassphrase').value);
-    clearKeyInputs();
-    setKeyStatus('Entsperrt für diese Browser-Sitzung.', 'ok');
-  } catch (e) {
-    setKeyStatus(e.message, 'error');
-  }
+$('replaceKeyBtn').addEventListener('click', async (e) => {
+  e.preventDefault();
+  forceSetup = true;
+  clearKeyInputs();
+  await refreshKeyStatus();
+  $('setApiKey').focus();
 });
 
 $('clearKeyBtn').addEventListener('click', async (e) => {
   e.preventDefault();
   await clearKey();
   clearKeyInputs();
-  setKeyStatus('Key gelöscht.', '');
+  forceSetup = false;
+  await refreshKeyStatus('Schlüssel gelöscht.', '');
 });
+
+/** Der Satz unter dem scharf/Testlauf-Schalter — dieselbe Quelle wie das Schild im Studio. */
+function renderDraftCreateHint() {
+  const mode = publishModeNote({ settings: { draftCreateEnabled: $('setDraftCreate').checked } });
+  $('draftCreateHint').textContent = mode.hint;
+  $('draftCreateHint').className = 'setting-hint' + (mode.kind === 'live' ? ' is-live' : '');
+}
 
 // ---------- Init ----------
 refreshLog();

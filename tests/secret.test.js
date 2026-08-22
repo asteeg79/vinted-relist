@@ -4,7 +4,7 @@ import { installChromeMock } from './helpers/chrome-mock.js';
 import {
   SECRET_KEY, SESSION_KEY,
   encryptKey, decryptKey, storeKey, unlockKey,
-  cacheKey, readCachedKey, hasStoredKey, clearKey
+  cacheKey, readCachedKey, hasStoredKey, clearKey, describeKeyState
 } from '../lib/secret.js';
 
 const API_KEY = 'sk-ant-api03-0123456789abcdef';
@@ -141,4 +141,41 @@ test('a new browser session (session storage gone) still has the record, but no 
   assert.equal(await hasStoredKey(), true);
   assert.equal(await readCachedKey(), null);
   assert.equal(await unlockKey(PASSPHRASE), API_KEY);
+});
+
+// ---------- der Schlüssel-Abschnitt in den Einstellungen ----------
+//
+// Vorher standen zwei Passwortfelder und zwei Knöpfe („Speichern", „Entsperren") in jeder
+// Lage gleichzeitig da. Wer einen Key eintrug, sah einen Knopf, der nichts tut; wer nur
+// entsperren wollte, musste raten, ob das leere Key-Feld auszufüllen ist. Drei Lagen, je
+// ein Weg — und die Entscheidung, welcher, gehört hierher und nicht ins Popup.
+
+test('describeKeyState: ohne Schlüssel wird eingerichtet — beide Felder, ein Knopf', () => {
+  const view = describeKeyState({ stored: false, unlocked: false });
+  assert.equal(view.state, 'empty');
+  assert.ok(view.needsKey && view.needsPassphrase);
+  assert.match(view.action, /speichern/i);
+  assert.match(view.hint, /Passphrase vergibst du selbst/, 'die Passphrase ist keine, die man schon hat');
+});
+
+test('describeKeyState: hinterlegt und gesperrt verlangt NUR die Passphrase', () => {
+  const view = describeKeyState({ stored: true, unlocked: false });
+  assert.equal(view.state, 'locked');
+  assert.equal(view.needsKey, false, 'das Key-Feld hier zu zeigen hieße: bitte nochmal eintippen');
+  assert.equal(view.needsPassphrase, true);
+  assert.equal(view.action, 'Entsperren');
+});
+
+test('describeKeyState: entsperrt verlangt gar nichts mehr', () => {
+  const view = describeKeyState({ stored: true, unlocked: true });
+  assert.equal(view.state, 'unlocked');
+  assert.equal(view.needsKey, false);
+  assert.equal(view.needsPassphrase, false);
+  assert.equal(view.action, null, 'kein Knopf, wenn es nichts zu tun gibt');
+  assert.match(view.hint, /Browser-Sitzung/);
+});
+
+test('describeKeyState: entsperrt schlägt hinterlegt — und ohne Argumente ist nichts da', () => {
+  assert.equal(describeKeyState({ stored: false, unlocked: true }).state, 'unlocked');
+  assert.equal(describeKeyState().state, 'empty');
 });

@@ -325,6 +325,38 @@ test('searchCatalogs: escapes the keyword rather than pasting it into the URL', 
   assert.match(fetchJson.calls[0].path, /keyword=T-Shirt%20%26%20Top/);
 });
 
+// ---------- nebenläufige Schreibvorgänge dürfen sich nicht überschreiben ----------
+
+test('cached: vier gleichzeitige Abrufe landen alle im Cache', async () => {
+  // `lookupDraft` holt Marken, Farben, Größen und Zustände in einem `Promise.all`. Der
+  // ganze Cache liegt unter EINEM Storage-Schlüssel: ohne Reihenfolge liest der zweite
+  // Schreiber den Stand von vor dem ersten und überschreibt ihn beim `set`. Sichtbar wäre
+  // das nur daran, dass eine Liste jedes Mal neu geholt wird.
+  const fetchJson = fakeTransport({
+    '/api/v2/item_upload/brands': { brands: [{ id: 53, title: 'Nike' }], code: 0 },
+    '/api/v2/item_upload/colors': { colors: [{ id: 1, title: 'Schwarz' }], code: 0 },
+    '/api/v2/item_upload/size_groups': { size_groups: [{ id: 9, sizes: [{ id: 105, title: 'M' }] }], code: 0 },
+    '/api/v2/item_upload/conditions': { conditions: [{ id: 2, title: 'Sehr gut' }], code: 0 }
+  });
+  const taxonomy = createTaxonomy({ fetchJson });
+
+  await Promise.all([taxonomy.brands(196), taxonomy.colors(), taxonomy.sizes(196), taxonomy.conditions(196)]);
+
+  const { taxonomy: cache } = await chrome.storage.local.get('taxonomy');
+  // Marken stehen absichtlich nicht dabei — die werden nie zwischengespeichert. Drei
+  // gleichzeitige Schreiber auf einen Storage-Schlüssel reichen für das Rennen.
+  assert.deepEqual(
+    Object.keys(cache).sort(),
+    ['colors', 'conditions:196', 'sizes:196'],
+    'keiner der drei darf beim Schreiben verlorengehen'
+  );
+
+  // Und der zweite Durchgang holt nur noch, was nicht zwischengespeichert wird (Marken).
+  const before = fetchJson.calls.length;
+  await Promise.all([taxonomy.colors(), taxonomy.sizes(196), taxonomy.conditions(196)]);
+  assert.equal(fetchJson.calls.length, before, 'alles kam aus dem Cache');
+});
+
 // ---------- transport is injected ----------
 
 test('the transport is a parameter — no fetch, no chrome message, is hardcoded', async () => {

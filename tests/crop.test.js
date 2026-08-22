@@ -461,6 +461,35 @@ test('boxFromModel: with the identity frame the box maps straight onto the origi
   assert.equal(box.y + box.h, 1120 + MY);
 });
 
+test('modelBoxVerdict: ein Etikett von 1,5 % der Fläche ist ein Zuschnitt, kein Missverständnis', () => {
+  // Der Prompt verlangt bei einem Etikettfoto ausdrücklich die Box um das ETIKETT. Ein
+  // eingenähtes Nackenetikett ist im Handyfoto ein bis drei Prozent der Fläche — unter der
+  // alten 5-%-Schwelle also garantiert verworfen, und zwar mit `too_small`, was nach einem
+  // Fehler des Modells klingt. Genau das Foto, dessen Zuschnitt die Größe lesbar macht.
+  const w = 3024, h = 4032;
+  const identity = { mode: 'crop', x: 0, y: 0, w, h };
+  const label = { x: 0.42, y: 0.30, w: 0.15, h: 0.10 }; // 1,5 % der Fläche
+  const v = modelBoxVerdict(label, identity, w, h);
+  assert.equal(v.reason, 'ok');
+  assert.ok(v.box);
+});
+
+test('modelBoxVerdict: verworfen wird, was das Inseratsbild weichzeichnen würde', () => {
+  // Der Schaden an einem winzigen Ausschnitt ist nicht seine Größe, sondern das
+  // Hochrechnen auf 1080 px Breite. Also entscheidet das — und der Grund heißt weiterhin
+  // `too_small`, meint jetzt aber „müsste zu stark hochgerechnet werden".
+  const w = 3024, h = 4032;
+  const identity = { mode: 'crop', x: 0, y: 0, w, h };
+  const sliver = { x: 0.49, y: 0.49, w: 0.02, h: 0.02 };
+  assert.equal(modelBoxVerdict(sliver, identity, w, h).reason, 'too_small');
+
+  // Und die Grenze hängt an der Zielbreite, nicht an einem Flächenanteil: dieselbe Box in
+  // einem kleinen Bild bleibt zu klein, in einem großen wird sie brauchbar.
+  const tiny = { x: 0.35, y: 0.35, w: 0.12, h: 0.12 };
+  assert.equal(modelBoxVerdict(tiny, { mode: 'crop', x: 0, y: 0, w: 900, h: 1200 }, 900, 1200).reason, 'too_small');
+  assert.equal(modelBoxVerdict(tiny, identity, w, h).reason, 'ok');
+});
+
 test('boxFromModel: the label case — a small box low in the frame survives intact', () => {
   // The regression this whole arrangement exists for: a size label in the lower third.
   // The background peel threw it away; the model's box must bring it back whole.

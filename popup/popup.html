@@ -110,59 +110,49 @@
     </header>
 
     <main class="main">
-      <div class="setting-row">
-        <label class="setting-label" for="setDelete">
-          <span>Original nach Klon löschen</span>
-          <span class="setting-hint">Wenn aus: Test-Modus, Original bleibt erhalten.</span>
-        </label>
-        <input id="setDelete" type="checkbox" class="toggle">
+      <!--
+        DREI GRUPPEN, IN DER REIHENFOLGE, IN DER MAN SIE BRAUCHT.
+
+        1. KI-Zugang — ohne ihn erkennt das Studio nichts, also steht er oben. Das Feld
+           zeigt genau einen Weg pro Lage; welchen, entscheidet lib/secret.js.
+        2. Auto-Listing — der scharf/Testlauf-Schalter zuerst, weil er als einziger
+           entscheidet, ob etwas öffentlich wird.
+        3. Relist — die ältere Pipeline, unverändert.
+      -->
+
+      <!-- ---------- 1 · KI-Zugang ---------- -->
+      <div class="setting-section">KI-Zugang</div>
+
+      <div class="key-panel" id="keyPanel">
+        <div class="key-head">
+          <strong id="keyTitle">KI einrichten</strong>
+          <span id="keyBadge" class="key-badge"></span>
+        </div>
+        <p id="keyHint" class="setting-hint"></p>
+
+        <label class="sr-only" for="setApiKey">Anthropic API-Key</label>
+        <input id="setApiKey" type="password" class="setting-input" placeholder="sk-ant-…"
+               autocomplete="off" spellcheck="false">
+        <label class="sr-only" for="setPassphrase">Passphrase</label>
+        <input id="setPassphrase" type="password" class="setting-input" placeholder="Passphrase"
+               autocomplete="off" spellcheck="false" style="margin-top: 6px;">
+
+        <button id="keyAction" class="btn-primary-sm key-action">Schlüssel speichern &amp; entsperren</button>
+        <p id="keyStatus" class="key-status" role="status" aria-live="polite"></p>
+
+        <div class="key-links">
+          <button id="replaceKeyBtn" class="btn-link" hidden>Anderen Schlüssel hinterlegen</button>
+          <button id="clearKeyBtn" class="btn-link" hidden>Schlüssel löschen</button>
+        </div>
       </div>
 
-      <div class="setting-row">
-        <label class="setting-label" for="setInterest">
-          <span>Vor Relist warnen bei Likes/Views</span>
-          <span class="setting-hint">Fragt vor dem Löschen ob du wirklich willst.</span>
-        </label>
-        <input id="setInterest" type="checkbox" class="toggle">
-      </div>
-
-      <div class="setting-row">
-        <label class="setting-label" for="setVerify">
-          <span>Klon vor Löschen verifizieren</span>
-          <span class="setting-hint">Holt das neue Listing noch mal ab — Schutz vor Phantom-Erstellungen.</span>
-        </label>
-        <input id="setVerify" type="checkbox" class="toggle">
-      </div>
-
-      <div class="setting-row stacked">
-        <label class="setting-label" for="setQuality">
-          <span>Foto-Qualität: <span id="qualityValue">92</span>%</span>
-          <span class="setting-hint">Höher = größere Datei, näher am Original.</span>
-        </label>
-        <input id="setQuality" type="range" min="60" max="98" step="1">
-      </div>
-
-      <div class="setting-row stacked">
-        <label class="setting-label" for="setWarnHour">
-          <span>Warnen ab <input id="setWarnHour" type="number" min="1" max="50" class="inline-input"> Relists / Stunde</span>
-        </label>
-      </div>
-
-      <div class="setting-row stacked">
-        <label class="setting-label" for="setWarn24h">
-          <span>Warnen ab <input id="setWarn24h" type="number" min="1" max="500" class="inline-input"> Relists / 24 h</span>
-        </label>
-      </div>
-
-      <button id="resetConfirm" class="btn-link" style="margin-top: 12px;">Erst-Bestätigung zurücksetzen</button>
-
-      <!-- Auto-Listing (ADR-0007). Alle Schalter der zweiten Pipeline an einer Stelle. -->
+      <!-- ---------- 2 · Auto-Listing ---------- -->
       <div class="setting-section">Auto-Listing</div>
 
-      <div class="setting-row">
+      <div class="setting-row is-emphasis">
         <label class="setting-label" for="setDraftCreate">
-          <span>Inserate wirklich erstellen</span>
-          <span class="setting-hint">Wenn aus: Trockenlauf — die Payload geht nur ins Log.</span>
+          <span>Inserate wirklich bei Vinted anlegen</span>
+          <span class="setting-hint" id="draftCreateHint"></span>
         </label>
         <input id="setDraftCreate" type="checkbox" class="toggle">
       </div>
@@ -227,20 +217,54 @@
         <button id="resetTemplate" class="btn-link" style="margin-top: 6px;">Vorlage zurücksetzen</button>
       </div>
 
-      <div class="setting-row stacked">
-        <label class="setting-label" for="setApiKey">
-          <span>Anthropic API-Key</span>
-          <span class="setting-hint">Verschlüsselt gespeichert (PBKDF2 + AES-GCM). Die Passphrase wird einmal pro Browser-Sitzung gebraucht.</span>
+      <!-- ---------- 3 · Relist ---------- -->
+      <div class="setting-section">Relist</div>
+
+      <div class="setting-row">
+        <label class="setting-label" for="setDelete">
+          <span>Original nach Klon löschen</span>
+          <span class="setting-hint">Wenn aus: Test-Modus, Original bleibt erhalten.</span>
         </label>
-        <input id="setApiKey" type="password" class="setting-input" placeholder="sk-ant-…" autocomplete="off" spellcheck="false">
-        <input id="setPassphrase" type="password" class="setting-input" placeholder="Passphrase" aria-label="Passphrase" autocomplete="off" spellcheck="false" style="margin-top: 6px;">
-        <div class="key-actions">
-          <button id="saveKey" class="btn-primary-sm">Speichern</button>
-          <button id="unlockKeyBtn" class="btn-secondary">Entsperren</button>
-        </div>
-        <p id="keyStatus" class="key-status" role="status" aria-live="polite"></p>
-        <button id="clearKeyBtn" class="btn-link">Key löschen</button>
+        <input id="setDelete" type="checkbox" class="toggle">
       </div>
+
+      <div class="setting-row">
+        <label class="setting-label" for="setInterest">
+          <span>Vor Relist warnen bei Likes/Views</span>
+          <span class="setting-hint">Fragt vor dem Löschen ob du wirklich willst.</span>
+        </label>
+        <input id="setInterest" type="checkbox" class="toggle">
+      </div>
+
+      <div class="setting-row">
+        <label class="setting-label" for="setVerify">
+          <span>Klon vor Löschen verifizieren</span>
+          <span class="setting-hint">Holt das neue Listing noch mal ab — Schutz vor Phantom-Erstellungen.</span>
+        </label>
+        <input id="setVerify" type="checkbox" class="toggle">
+      </div>
+
+      <div class="setting-row stacked">
+        <label class="setting-label" for="setQuality">
+          <span>Foto-Qualität: <span id="qualityValue">92</span>%</span>
+          <span class="setting-hint">Höher = größere Datei, näher am Original.</span>
+        </label>
+        <input id="setQuality" type="range" min="60" max="98" step="1">
+      </div>
+
+      <div class="setting-row stacked">
+        <label class="setting-label" for="setWarnHour">
+          <span>Warnen ab <input id="setWarnHour" type="number" min="1" max="50" class="inline-input"> Relists / Stunde</span>
+        </label>
+      </div>
+
+      <div class="setting-row stacked">
+        <label class="setting-label" for="setWarn24h">
+          <span>Warnen ab <input id="setWarn24h" type="number" min="1" max="500" class="inline-input"> Relists / 24 h</span>
+        </label>
+      </div>
+
+      <button id="resetConfirm" class="btn-link" style="margin-top: 12px;">Erst-Bestätigungen zurücksetzen</button>
     </main>
 
     <footer class="footer settings-footer">

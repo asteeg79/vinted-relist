@@ -10,18 +10,19 @@
  * The photos never leave this tab except as the small, already-cropped copy that goes to
  * the recognition call. Closing the tab loses them; the texts survive in the draft.
  */
-import { getSettings } from '../lib/settings.js';
+import { getSettings, SETTINGS_KEY } from '../lib/settings.js';
 import { readCachedKey } from '../lib/secret.js';
 import { analyse } from '../lib/ai.js';
 import { draftView, conflictedFields, FIELD_NEEDS_CONFIRMATION } from '../lib/draft-view.js';
 import { loadPriceMemory, savePrice } from '../lib/price-memory.js';
-import { draftStageNote } from '../lib/gates.js';
+import { publishModeNote } from '../lib/gates.js';
 import { HARD_MAX, SOFT_MAX } from '../lib/title.js';
 import { createTaxonomy } from '../lib/taxonomy.js';
 import { createVintedFetch } from '../lib/vinted-read.js';
 import { lookupDraft } from '../lib/lookup.js';
 import { ensureAuth } from '../lib/auth.js';
 import { log, LOG_KEY, clearLog } from '../lib/logger.js';
+import { arrayBufferToBase64 } from '../lib/util.js';
 
 /**
  * Conservative until the spike (Schritt 0b) says what Vinted actually allows. ONE place,
@@ -38,7 +39,12 @@ const DOMAIN = 'www.vinted.de';
 const $ = id => document.getElementById(id);
 
 const state = {
-  /** { id, url, blob, base64, mediaType, touchesEdge, role, croppedOff } in display order */
+  /**
+   * In display order. ZWEI KOPIEN JE FOTO, und die Unterscheidung ist tragend:
+   *   blob        das Inseratsbild, 1080×1350, zugeschnitten — DAS wird hochgeladen
+   *   modelBase64 das ganze Foto, ungeschnitten — DAS sieht die Erkennung
+   * { id, url, blob, modelBase64, mediaType, touchesEdge, role, croppedOff }
+   */
   photos: [],
   analysis: null,
   settings: null,
@@ -54,6 +60,8 @@ const state = {
   picks: {},
   price: null,
   condition: null,
+  /** Die id des Inserats, das aus diesem Draft entstanden ist — danach ist er verbraucht. */
+  publishedId: null,
   busy: false
 };
 
@@ -88,6 +96,11 @@ $('dropzone').addEventListener('drop', e => {
 
 async function addFiles(files) {
   if (!files.length) return;
+  // WÄHREND DER ERKENNUNG NICHT. Das Modell antwortet mit Foto-INDIZES; kommt zwischen
+  // Frage und Antwort ein Foto dazu oder weg, bekommt das falsche Foto die Rolle, das
+  // `cropped_off` und die Artikelbox eines anderen — und wird danach auf einen Bereich
+  // zugeschnitten, den nie jemand für dieses Foto geprüft hat.
+  if (state.busy) return setIntake('Erkennung läuft — bitte warten.');
   const room = MAX_PHOTOS - state.photos.length;
   if (room <= 0) return setIntake(`Mehr als ${MAX_PHOTOS} Fotos gehen nicht.`);
   const accepted = files.slice(0, room);
@@ -95,6 +108,7 @@ async function addFiles(files) {
   setIntake(`Verarbeite ${accepted.length} Foto(s)…`);
   // Loaded lazily: the canvas adapter touches the DOM, which the lib modules never do.
   const { prepare } = await import('./canvas.js');
+  const failed = [];
 
   for (const file of accepted) {
     try {
@@ -119,18 +133,30 @@ async function addFiles(files) {
       });
     } catch (e) {
       log('studio_photo_failed', { name: file.name, error: e.message });
-      setIntake(`"${file.name}" konnte nicht gelesen werden: ${e.message}`);
+      failed.push(file.name);
     }
   }
 
+  // Neue Fotos sind ein neuer Artikel: die Sperre nach einem eingestellten Inserat gilt
+  // für den Draft, aus dem es entstanden ist, nicht für den nächsten.
+  state.publishedId = null;
+
+  // Die Meldung am Ende trägt BEIDES. Vorher schrieb der catch-Zweig seinen Satz hin, und
+  // zwei Zeilen später überschrieb ihn diese Stelle mit '' — wer eine HEIC-Datei mit
+  // hineinzog, sah zwei Fotos statt drei und nirgends eine Erklärung.
   const skipped = files.length - accepted.length;
-  setIntake(skipped ? `${skipped} Foto(s) übersprungen — Grenze sind ${MAX_PHOTOS}.` : '');
+  const parts = [];
+  if (skipped) parts.push(`${skipped} Foto(s) übersprungen — Grenze sind ${MAX_PHOTOS}.`);
+  if (failed.length) parts.push(`Nicht lesbar: ${failed.join(', ')}.`);
+  setIntake(parts.join(' '));
   render();
 }
 
 function setIntake(text) { $('intakeStatus').textContent = text; }
 
 function removePhoto(id) {
+  // Siehe `addFiles`: die Antwort des Modells zeigt auf Positionen in dieser Liste.
+  if (state.busy) return setIntake('Erkennung läuft — bitte warten.');
   const index = state.photos.findIndex(p => p.id === id);
   if (index < 0) return;
   URL.revokeObjectURL(state.photos[index].url);
@@ -146,14 +172,16 @@ $('analyse').addEventListener('click', async () => {
 
   const apiKey = await readCachedKey();
   if (!apiKey) {
-    return setAnalyse('Kein API-Key entsperrt — in den Einstellungen des Popups eintragen bzw. entsperren.', 'error');
+    return setAnalyse('KI gesperrt — im Popup unter Einstellungen › KI-Zugang entsperren.', 'error');
   }
 
   setBusy(true);
   setAnalyse('Erkenne Artikel…', 'working');
   try {
     state.analysis = await analyse(
-      state.photos.map(p => ({ base64: p.base64, mediaType: p.mediaType })),
+      // Die Modellkopie: das ganze Foto, ungeschnitten. Das Inseratsbild wäre hier falsch
+      // — der Zuschnitt ist die Antwort auf die Erkennung, nicht ihre Eingabe.
+      state.photos.map(p => ({ base64: p.modelBase64, mediaType: p.mediaType })),
       { apiKey, settings: state.settings, log }
     );
     applySuggestedOrder();
@@ -197,6 +225,8 @@ async function runLookup() {
       // Mitgeben, sonst gilt jede behaltene Stufe als selbst gewählt und der Hinweis,
       // warum die Erkennung sie vorgeschlagen hat, verschwindet beim nächsten Nachschlagen.
       conditionMeta: state.conditionMeta,
+      // Ebenso: ein offener Widerspruch der Gegenprobe darf sich nicht wegauflösen lassen.
+      previous: state.resolved,
       settings: state.settings || {},
       // What the user typed wins over what the model called the article.
       labels: { category: state.overrides.category }
@@ -209,7 +239,14 @@ async function runLookup() {
     // reading when it was sure enough, otherwise the configured default. Either way it
     // still has to be confirmed.
     state.condition = result.condition.id;
-    state.conditionMeta = { source: result.condition.source, evidence: result.condition.evidence };
+    // Vollständig übernehmen: `value` ist das Symbol, das `chooseCondition` gewählt hat,
+    // und ohne es verliert eine behaltene Stufe beim nächsten Nachschlagen die Hälfte
+    // ihrer Herkunft — dieselbe Lücke wie zuvor bei `evidence`.
+    state.conditionMeta = {
+      source: result.condition.source,
+      value: result.condition.value,
+      evidence: result.condition.evidence
+    };
     log('studio_lookup', {
       catalog: result.resolved.catalog?.id ?? null,
       brand: result.resolved.brand?.id ?? null,
@@ -300,18 +337,26 @@ async function applySuggestedCrops() {
         // doing that is a prompt problem which silence would hide.
         log('studio_recrop_skipped', { name: photo.name, reason: redrawn.boxReason, box: photo.articleBox });
         URL.revokeObjectURL(redrawn.url);
-        URL.revokeObjectURL(redrawn.modelUrl);
         continue;
       }
+      // NUR die Inseratskopie wird frei — die Modellkopie liefert der zweite Durchgang gar
+      // nicht mehr, weil sie Byte für Byte dieselbe wäre. `Object.assign` lässt sie stehen.
       URL.revokeObjectURL(photo.url);
-      URL.revokeObjectURL(photo.modelUrl);
       Object.assign(photo, redrawn);
       log('studio_recrop', {
         name: photo.name,
         distractions: photo.distractions,
+        // Die Box gehört ins Log, auch wenn sie angenommen wurde. Am 2026-08-21 stand im
+        // ersten echten Inserat unten immer noch der Fotograf im Bild, während das Log
+        // „distractions: Füße des Fotografen unten" und „mode: crop" meldete — beides
+        // richtig, und trotzdem nicht nachvollziehbar, weil niemand sah, WELCHE Box
+        // benutzt wurde. Ohne die Zahlen ist nicht zu unterscheiden, ob das Modell zu
+        // großzügig gezeichnet oder der 4:5-Rahmen den Rand wieder hereingeholt hat.
+        box: photo.articleBox,
         mode: redrawn.mode,
         listing: `${redrawn.width}×${redrawn.height}`,
-        model: `${redrawn.modelWidth}×${redrawn.modelHeight}`
+        // Aus dem ersten Durchgang — der zweite zeichnet sie nicht neu.
+        model: `${photo.modelWidth}×${photo.modelHeight}`
       });
     } catch (e) {
       // A failed redraw leaves the first pass in place — a photo, just with more background.
@@ -347,6 +392,7 @@ function currentView() {
     confirmations: state.confirmations,
     overrides: state.overrides,
     priceMemory: state.priceMemory,
+    publishedId: state.publishedId,
     photos: state.photos.map(p => ({
       touchesEdge: p.touchesEdge,
       judged: p.judged === true,
@@ -358,16 +404,37 @@ function currentView() {
 }
 
 function render() {
+  // DEN FOKUS RETTEN. `renderFields` ersetzt jedes Eingabefeld; `change` feuert beim
+  // Verlassen, also genau dann, wenn der Browser das NÄCHSTE Feld schon fokussiert hat.
+  // Ohne das hier fiel der Fokus bei jedem Tab-Sprung auf <body>, und man musste jedes
+  // Feld mit der Maus neu greifen. Gemerkt wird der Feldschlüssel, nicht das Element —
+  // das alte ist nach dem Neuaufbau ohnehin weg.
+  const focused = document.activeElement?.dataset?.field || null;
+  const caret = typeof document.activeElement?.selectionStart === 'number'
+    ? document.activeElement.selectionStart
+    : null;
+
   const view = currentView();
   renderPhotos(view);
   renderFields(view);
   renderDerived(view);
 
-  // Das Schild oben rechts. Der Text kam bis 0.90.0 aus dem HTML und stand auf „Stufe 1",
-  // während die Seite längst nachschlug und hochlud.
-  const stage = draftStageNote({ settings: state.settings || {}, hasAnalysis: !!state.analysis });
-  $('stageNote').textContent = stage.text;
-  $('stageNote').className = 'stage-note is-' + stage.kind;
+  if (focused) {
+    const next = $('fieldList').querySelector(`[data-field="${focused}"]`);
+    if (next) {
+      next.focus();
+      if (caret != null && typeof next.setSelectionRange === 'function') {
+        next.setSelectionRange(caret, caret);
+      }
+    }
+  }
+
+  // Das Schild oben rechts: entsteht hier ein echtes Inserat, oder nicht? Mehr wird dort
+  // nicht beantwortet — die Stufen aus dem Konzept waren eine Entwicklungslandkarte und
+  // keine Auskunft über den nächsten Klick.
+  const mode = publishModeNote({ settings: state.settings || {} });
+  $('stageNote').textContent = mode.text;
+  $('stageNote').className = 'stage-note is-' + mode.kind;
 
   $('volatileHint').hidden = !state.photos.length;
   $('analyse').disabled = state.busy || !state.photos.length;
@@ -402,15 +469,12 @@ function renderDerived(view = currentView()) {
   });
 
   // The studio only renders this decision — draft.js recomputes it before it writes
-  // anything, so a bug here can make the button useless but never dangerous.
-  const dryRun = state.settings?.draftCreateEnabled === false;
+  // anything, so a bug here can make the button useless but never dangerous. Schild,
+  // Knopf und Hinweis stammen aus derselben Quelle, damit sie nicht auseinanderlaufen.
+  const mode = publishModeNote({ settings: state.settings || {} });
   $('publish').disabled = state.busy || !view.canPublish || !state.photos.length;
-  $('publish').querySelector('.btn-label')?.replaceChildren(
-    document.createTextNode(dryRun ? 'Trockenlauf starten' : 'Veröffentlichen')
-  );
-  $('publishHint').textContent = dryRun
-    ? 'Trockenlauf: die Payload geht ins Log, es wird nichts eingestellt.'
-    : 'Das Inserat wird wirklich eingestellt und ist danach öffentlich sichtbar.';
+  $('publish').querySelector('.btn-label')?.replaceChildren(document.createTextNode(mode.button));
+  $('publishHint').textContent = mode.hint;
 }
 
 function renderPhotos(view) {
@@ -507,7 +571,9 @@ function bindDrag(li, id) {
   li.addEventListener('dragover', e => e.preventDefault());
   li.addEventListener('drop', e => {
     e.preventDefault();
-    if (!dragging || dragging === id) return;
+    // Umsortieren während der Erkennung verschiebt genau die Positionen, auf die sich die
+    // Antwort des Modells gleich bezieht — siehe `addFiles`.
+    if (state.busy || !dragging || dragging === id) return;
     const from = state.photos.findIndex(p => p.id === dragging);
     const to = state.photos.findIndex(p => p.id === id);
     if (from < 0 || to < 0) return;
@@ -577,6 +643,7 @@ function valueInput(field) {
   input.value = field.value ?? '';
   input.placeholder = field.required ? 'erforderlich' : 'optional';
   input.setAttribute('aria-label', field.label);
+  input.dataset.field = field.key;
   // Typing counts as a decision, so the state only settles when the field is left.
   input.addEventListener('input', () => {
     state.overrides[field.key] = input.value;
@@ -619,6 +686,7 @@ function conditionInput(field) {
   const select = document.createElement('select');
   select.className = 'field-value';
   select.setAttribute('aria-label', field.label);
+  select.dataset.field = field.key;
 
   const empty = document.createElement('option');
   empty.value = '';
@@ -638,8 +706,7 @@ function conditionInput(field) {
 
   select.addEventListener('change', async () => {
     state.condition = select.value ? Number(select.value) : null;
-    state.conditionMeta = { source: 'user', evidence: null };
-    delete state.overrides.condition;
+    state.conditionMeta = { source: 'user', value: null, evidence: null };
     // A changed condition is a new answer — it has to be confirmed again. And the price
     // range moves with it, so it is refetched (Entscheidung W3).
     delete state.confirmations.condition;
@@ -759,21 +826,35 @@ function setPublish(text, kind = '') {
 $('publish').addEventListener('click', async () => {
   if (state.busy) return;
 
-  // 1. Walk whatever gates the worker hands back. Only the first LIVE create has one.
-  const gateReply = await chrome.runtime.sendMessage({ type: 'draft/gates' });
-  for (const gate of gateReply?.gates || []) {
-    setPublish('', '');
-    if (!await askGate(gate)) return setPublish('Abgebrochen.', 'error');
-    if (gate.remember) await chrome.runtime.sendMessage({ type: 'draft/confirmed' });
-  }
-
-  // 2. Hand the whole draft over. The worker recomputes the view and refuses a draft
-  //    that is not ready — this side's `canPublish` is a rendering hint, not authority.
+  // AB HIER BESETZT. Vorher stand das erst nach dem Gate-Umlauf, und solange der Dialog
+  // offen war, blieb der Knopf klickbar: ein zweiter Klick hängte `askGate` neu auf, und
+  // das erste Versprechen wartete bis zum Tab-Ende auf einen Klick, der nie kam.
   state.busy = true;
   $('publish').classList.add('is-loading');
   $('publish').disabled = true;
-  setPublish('Wird veröffentlicht…', 'working');
+
   try {
+    // 1. Walk whatever gates the worker hands back. Only the first LIVE create has one.
+    //
+    // IM ZWEIFEL NICHT VERÖFFENTLICHEN. Dieser Aufruf stand außerhalb von try/catch und
+    // fiel nach außen offen aus: schlief der Worker, verpuffte der Klick ohne ein Wort;
+    // antwortete er `{ok:false}`, war `gates` undefined, die Schleife lief null Mal — und
+    // das erste echte Inserat entstand, ohne dass die Warnung je zu sehen war. Ein Gate,
+    // das man nicht holen kann, ist keine Erlaubnis.
+    setPublish('Prüfe Freigaben…', 'working');
+    const gateReply = await chrome.runtime.sendMessage({ type: 'draft/gates' });
+    if (!gateReply?.ok || !Array.isArray(gateReply.gates)) {
+      throw new Error(gateReply?.error || 'Freigaben nicht erreichbar — Erweiterung neu laden und erneut versuchen.');
+    }
+    for (const gate of gateReply.gates) {
+      setPublish('', '');
+      if (!await askGate(gate)) return setPublish('Abgebrochen.', 'error');
+      if (gate.remember) await chrome.runtime.sendMessage({ type: 'draft/confirmed' });
+    }
+
+    // 2. Hand the whole draft over. The worker recomputes the view and refuses a draft
+    //    that is not ready — this side's `canPublish` is a rendering hint, not authority.
+    setPublish('Wird veröffentlicht…', 'working');
     const reply = await chrome.runtime.sendMessage({
       type: 'draft/publish',
       request: {
@@ -790,9 +871,14 @@ $('publish').addEventListener('click', async () => {
           // upload_session_id gibt. Hier stand ein Feld, das nie jemand gesetzt hat.
           photos: state.photos.map(p => ({ touchesEdge: p.touchesEdge, judged: p.judged === true }))
         },
-        photos: state.photos.map((p, i) => ({
-          base64: p.base64, mediaType: p.mediaType, filename: `foto-${i + 1}.jpg`
-        }))
+        // Das INSERATSBILD, hier und nur hier kodiert: 1080×1350, zugeschnitten oder
+        // gepolstert. Die Nachricht an den Worker kann keinen Blob tragen, deshalb
+        // base64 — aber erst jetzt, nicht schon beim Aufbereiten, und aus `blob`.
+        photos: await Promise.all(state.photos.map(async (p, i) => ({
+          base64: arrayBufferToBase64(await p.blob.arrayBuffer()),
+          mediaType: p.mediaType,
+          filename: `foto-${i + 1}.jpg`
+        })))
       }
     });
     const message = reply?.message || { kind: 'error', text: 'Fehler: unbekannt' };
@@ -809,7 +895,13 @@ $('publish').addEventListener('click', async () => {
       log('studio_conflict', { fields: open });
     }
 
-    if (reply?.newUrl) log('studio_published', { newId: reply.newId });
+    if (reply?.newUrl) {
+      // Der Draft ist verbraucht. Ohne diese Zeile war der Knopf nach dem Erfolg sofort
+      // wieder aktiv — und ein zweiter Klick legte dasselbe Inserat ein zweites Mal an,
+      // ohne Gate, weil die Erst-Bestätigung gemerkt ist.
+      state.publishedId = reply.newId;
+      log('studio_published', { newId: reply.newId });
+    }
   } catch (e) {
     setPublish('Fehler: ' + e.message, 'error');
   } finally {
@@ -889,7 +981,15 @@ async function refreshLog() {
 // Every log() writes to storage, so this fires for the studio's own lines as well as for
 // anything the service worker logs during publishing.
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === 'local' && changes[LOG_KEY]) refreshLog();
+  if (area !== 'local') return;
+  if (changes[LOG_KEY]) refreshLog();
+  // Die Einstellungen wurden einmal beim Laden gelesen. Wer im Popup scharf schaltete,
+  // während diese Seite offen stand, sah hier weiter „Testlauf" — und der Worker, der die
+  // Einstellungen frisch liest, legte trotzdem ein echtes Inserat an. Das Schild, der
+  // Knopf und der Satz darunter hängen alle an diesem Wert.
+  // `getSettings()` statt `newValue`: gespeichert wird nur, was abweicht, und die
+  // Voreinstellungen kommen erst beim Lesen dazu.
+  if (changes[SETTINGS_KEY]) getSettings().then(next => { state.settings = next; render(); });
 });
 
 $('logBox').addEventListener('toggle', () => { if ($('logBox').open) refreshLog(); });
