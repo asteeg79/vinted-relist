@@ -176,6 +176,29 @@ test('a failing attribute call does not block a reviewed draft', async () => {
   assert.ok(port.calls.some(c => c.name === 'log' && c.args[0] === 'category_attributes_failed'));
 });
 
+test('eine überstimmte Erkennung hält den Lauf nicht auf, steht aber im Protokoll', async () => {
+  // Der Kinderpullover vom 2026-08-23: Vinted hält ihn hartnäckig für einen Herren-Sweater.
+  // Wer die Kategorie ausdrücklich gewählt hat, muss veröffentlichen können — und
+  // nachlesen können, wen er dabei überstimmt hat.
+  const draft = {
+    ...READY_DRAFT,
+    resolved: {
+      ...READY_DRAFT.resolved,
+      catalog: { id: 196, label: 'Hoodies & Sweaters', confidence: 1, candidates: [], source: 'pick' }
+    }
+  };
+  const port = makeFakeDraftPort({
+    settings: { draftCreateEnabled: true },
+    suggestCategories: () => [1811]
+  });
+  const result = await publishDraft(request({ draft }), port);
+
+  assert.equal(result.newId, 555001, 'der Lauf geht durch');
+  assert.equal(result.conflict, undefined);
+  const logged = port.calls.find(c => c.name === 'log' && c.args[0] === 'publish_override');
+  assert.deepEqual(logged.args[1].fields[0], { key: 'catalog', ours: 196, vinted: [1811] });
+});
+
 // ================================================================================
 // The parcel size — Vinted's own recommendation instead of null.
 // ================================================================================

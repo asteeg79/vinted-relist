@@ -266,3 +266,43 @@ test('exactMatch: ohne splitOn wird nichts zerlegt — auch das Gelesene nicht',
   const brands = [{ id: 1, title: 'Nike' }, { id: 2, title: 'Jordan' }];
   assert.deepEqual(exactMatch('Nike/Jordan', brands), []);
 });
+
+// ---------- eine ausdrückliche Wahl steht ----------
+//
+// Gemeldet am 2026-08-23: ein Kinderpullover, den Vinteds Fotoerkennung für einen
+// Herren-Sweater hielt. Das Feld wurde geleert, der Nutzer wählte seine Kategorie erneut,
+// veröffentlichte — und bekam denselben Widerspruch zurück. Eine Schleife ohne Ausgang.
+
+const KIDS = { id: 1672, title: 'Hoodies & Sweatshirts', path: 'Kinder > Jungs > Pullover & Jäckchen > Hoodies & Sweatshirts' };
+const MENS = { id: 1811, title: 'Sweater', path: 'Herren > Kleidung > Pullover & Sweater > Sweater' };
+
+test('crossCheck: eine gewählte Kategorie überstimmt Vinteds Erkennung', () => {
+  const picked = resolveField({ label: 'egal', candidates: [KIDS, MENS], pick: 1672 });
+  assert.equal(picked.source, 'pick');
+
+  const checked = crossCheck(picked, { ids: [1811], candidates: [MENS] });
+  assert.equal(checked.agreed, true, 'kein Blocker mehr');
+  assert.equal(checked.id, 1672, 'und zwar bei der eigenen Antwort');
+  assert.deepEqual(checked.overriddenBy.map(o => o.id), [1811], 'der Widerspruch ist protokolliert, nicht verschwunden');
+});
+
+test('crossCheck: ohne ausdrückliche Wahl blockt der Widerspruch weiter', () => {
+  // Zwei maschinelle Erkennungen, die sich widersprechen — genau der Fall, für den
+  // Entscheidung C gemacht ist.
+  const found = resolveField({ label: 'Hoodies & Sweatshirts', candidates: [KIDS, MENS] });
+  assert.equal(found.source, 'exact');
+
+  const checked = crossCheck(found, { ids: [1811], candidates: [MENS] });
+  assert.equal(checked.agreed, false);
+  assert.equal(checked.id, null);
+  assert.equal(checked.overriddenBy, undefined);
+});
+
+test('crossCheck: im Widerspruch trägt AUCH die eigene Antwort ihren Pfad', () => {
+  // „Hoodies & Sweatshirts" gegen „Herren > Kleidung > Pullover & Sweater > Sweater": dass
+  // die erste die Kinder-Kategorie ist, war an der Beschriftung nicht zu erkennen.
+  const found = resolveField({ label: 'Hoodies & Sweatshirts', candidates: [KIDS, MENS] });
+  const checked = crossCheck(found, { ids: [1811], candidates: [MENS] });
+  assert.match(checked.candidates[0].label, /Kinder > Jungs/);
+  assert.match(checked.candidates[1].label, /Herren > Kleidung/);
+});

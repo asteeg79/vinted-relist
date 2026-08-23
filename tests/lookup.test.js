@@ -580,6 +580,69 @@ test('lookupDraft: a colour that DID resolve is not buried under 29 alternatives
   assert.deepEqual(r.resolved.color.candidates, []);
 });
 
+// ---------- durch den Kategoriebaum navigieren ----------
+
+test('lookupDraft: ein getipptes Wort navigiert, statt Vinted zu fragen', async () => {
+  // Gemeldet: für einen Kinderpullover schlug die Stichwortsuche nur „Herren > Sweatshirt"
+  // vor. Ein einzelnes Blatt wird übernommen — und daran hängt die ganze Größenmenge.
+  let searched = 0;
+  const taxonomy = fakeTaxonomy({ searchCatalogs: async () => { searched++; return [196]; } });
+  const r = await lookupDraft({
+    analysis: analysis({ type: 'Sweatshirt' }), taxonomy, labels: { category: 'T-Shirts' }, condition: 2
+  });
+  assert.equal(r.resolved.catalog.id, 1807, 'im Baum gefunden');
+  assert.equal(searched, 0, 'ein getipptes Wort ist ein Weg, keine Suchanfrage');
+});
+
+test('lookupDraft: Vinteds Suche bleibt der Ausweg, wenn der Baum das Wort nicht kennt', async () => {
+  const seen = [];
+  const taxonomy = fakeTaxonomy({ searchCatalogs: async k => { seen.push(k); return [1807]; } });
+  const r = await lookupDraft({
+    analysis: analysis(), taxonomy, labels: { category: 'Kapuzenpulli' }, condition: 2
+  });
+  assert.deepEqual(seen, ['Kapuzenpulli']);
+  assert.equal(r.resolved.catalog.id, 1807);
+});
+
+test('lookupDraft: ein einziges Blatt im Baum wird übernommen — gefunden, nicht geprüft', async () => {
+  // Wie bei Vinteds Suche: die Konfidenz bleibt unter der Schwelle, das Feld verlangt also
+  // eine Bestätigung, und die Warnung sagt, woher die Kategorie kommt.
+  const r = await lookupDraft({
+    analysis: analysis(), taxonomy: fakeTaxonomy(), labels: { category: 'Herren Kleidung' }, condition: 2
+  });
+  assert.equal(r.resolved.catalog.id, 1807);
+  assert.equal(r.resolved.catalog.confidence, 0.5);
+  assert.ok(r.warnings.some(w => /Baum/.test(w)), r.warnings.join(' | '));
+});
+
+test('lookupDraft: mehrere Blätter im Baum sind eine Auswahl mit vollem Pfad', async () => {
+  // Der Pfad ist das Einzige, was „Kinder > … > Pullover" von „Herren > … > Pullover"
+  // unterscheidet — als Beschriftung ist er deshalb Pflicht, nicht Zierde.
+  const taxonomy = fakeTaxonomy({
+    catalogs: async () => [
+      ...CATALOGS,
+      { id: 1808, title: 'Bedruckte T-Shirts', path: 'Herren > Kleidung > Bedruckte T-Shirts', isLeaf: true }
+    ]
+  });
+  const r = await lookupDraft({ analysis: analysis(), taxonomy, labels: { category: 'Herren Kleidung' }, condition: 2 });
+  assert.equal(r.resolved.catalog.id, null);
+  assert.deepEqual(r.resolved.catalog.candidates.map(c => c.id), [1807, 1808]);
+  assert.ok(r.resolved.catalog.candidates.every(c => /Herren > Kleidung/.test(c.label)));
+});
+
+test('lookupDraft: zu viele Blätter werden zu Schritten ohne id', async () => {
+  // Ein Schritt ist kein Ziel: das Studio schreibt seinen Pfad zurück ins Feld und filtert
+  // eine Ebene tiefer. Eine id hätte er nicht — es gibt keine Kategorie „Herren".
+  const many = Array.from({ length: 30 }, (_, i) => ({
+    id: 9000 + i, title: 'Teil ' + i, path: `Herren > Kleidung > Gruppe ${i % 3} > Teil ${i}`, isLeaf: true
+  }));
+  const taxonomy = fakeTaxonomy({ catalogs: async () => many });
+  const r = await lookupDraft({ analysis: analysis(), taxonomy, labels: { category: 'Herren' }, condition: 2 });
+  const candidates = r.resolved.catalog.candidates;
+  assert.ok(candidates.length && candidates.every(c => c.id == null && c.path));
+  assert.ok(candidates.some(c => /Gruppe 0/.test(c.path)), JSON.stringify(candidates));
+});
+
 // ---------- the typed category ----------
 
 test('lookupDraft: what the user typed beats what the model called it', async () => {

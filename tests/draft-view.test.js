@@ -177,6 +177,20 @@ test('draftView: der Zustand kommt nie aus einem getippten Wort', () => {
   assert.equal(f.value, 'Sehr gut', 'Vinteds Wort zur id, nicht das getippte');
 });
 
+test('draftView: eine überstimmte Erkennung steht als Hinweis da, nicht als Blocker', () => {
+  const view = draftView(readyWith({
+    catalog: {
+      id: 1672, label: 'Hoodies & Sweatshirts', confidence: 1, candidates: [], agreed: true,
+      overriddenBy: [{ id: 1811, label: 'Herren > Kleidung > Pullover & Sweater > Sweater' }]
+    }
+  }));
+  const f = field(view, 'category');
+  assert.equal(f.state, FIELD_OK);
+  assert.equal(view.canPublish, true);
+  assert.match(f.hint, /Vinted sieht/);
+  assert.match(f.hint, /deine Wahl steht/);
+});
+
 // ---------- warum das Preisfeld leer ist ----------
 
 test('draftView: ein fehlender Preis sagt, woran es liegt', () => {

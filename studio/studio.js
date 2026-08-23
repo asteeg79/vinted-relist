@@ -709,16 +709,25 @@ async function retypeField(key) {
   setAnalyse(`Schlage die ${label} nach…`, 'working');
 
   let failed = await runLookup();
-  const found = failed ? null : state.resolved[resolvedKey]?.id;
+  const resolution = failed ? null : state.resolved[resolvedKey];
+  const found = resolution?.id ?? null;
   if (found != null) {
     state.picks[key] = found;
     delete state.overrides[key];
     failed = await runLookup();
   }
+
   // Ein 401 hat Vorrang vor jedem Befund — „nicht gefunden" wäre dann schlicht gelogen.
+  if (failed) return setAnalyse(failed, 'error');
+  if (found != null) return setAnalyse(`${label}: ${state.resolved[resolvedKey].label}`, 'ok');
+
+  // Eine Auswahl ist auch ein Befund, und beim Navigieren durch den Baum der Normalfall:
+  // „Kinder" ist keine Kategorie, sondern ein Bereich. „Keine passende Kategorie gefunden"
+  // wäre hier eine Absage an einen Schritt, der gerade funktioniert hat.
+  const options = resolution?.candidates?.length ?? 0;
   setAnalyse(
-    failed || (found != null ? `${label}: ${state.resolved[resolvedKey].label}` : `Keine passende ${label} gefunden.`),
-    (failed || found == null) ? 'error' : 'ok'
+    options ? `${label}: ${options} zur Auswahl — unten weitergehen` : `Keine passende ${label} gefunden.`,
+    options ? 'ok' : 'error'
   );
 }
 
@@ -835,14 +844,23 @@ function candidateSelect(field) {
   select.className = 'field-candidates';
   select.setAttribute('aria-label', field.label + ' auswählen');
 
+  // Ein Schritt (`path`, keine id) ist kein Ziel, sondern die nächste Eingabe — siehe
+  // `browseCatalogs`. Das Auswahlfeld sagt deshalb, was es gerade anbietet.
+  const stepping = field.candidates.some(c => c.id == null && c.path);
+
   const empty = document.createElement('option');
   empty.value = '';
-  empty.textContent = `${field.candidates.length} Treffer — auswählen`;
+  empty.textContent = stepping
+    ? `${field.candidates.length} Bereiche — weiter eingrenzen`
+    : `${field.candidates.length} Treffer — auswählen`;
   select.appendChild(empty);
 
   for (const candidate of field.candidates) {
     const option = document.createElement('option');
-    option.value = String(candidate.id ?? candidate.label);
+    // Ein Schritt trägt seinen Pfad, ein Treffer seine id. Beides landet unten in
+    // verschiedenen Zweigen, und die Unterscheidung ist genau die zwischen „weiter" und
+    // „das ist es".
+    option.value = candidate.id != null ? String(candidate.id) : (candidate.path ?? candidate.label);
     option.textContent = candidate.label;
     select.appendChild(option);
   }
@@ -850,7 +868,7 @@ function candidateSelect(field) {
   select.addEventListener('change', async () => {
     if (!select.value) return;
     const id = Number(select.value);
-    if (Number.isFinite(id)) {
+    if (Number.isFinite(id) && field.candidates.some(c => String(c.id) === select.value)) {
       // The pick still passes validatePick inside resolve.js — this only proposes it.
       state.picks[field.key] = id;
       setAnalyse(`${field.label} wird nachgeschlagen…`, 'working');
@@ -858,7 +876,9 @@ function candidateSelect(field) {
       const chosen = field.candidates.find(c => c.id === id)?.label;
       setAnalyse(failed || `${field.label}: ${chosen ?? 'übernommen'}`, failed ? 'error' : 'ok');
     } else {
+      // Der gewählte Pfad wird zum getippten Wort — dieselbe Filterung, eine Ebene tiefer.
       state.overrides[field.key] = select.value;
+      if (RELOOKUP_ON_TYPE[field.key]) await retypeField(field.key);
     }
     render();
   });

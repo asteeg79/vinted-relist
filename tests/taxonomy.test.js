@@ -4,7 +4,7 @@ import { installChromeMock } from './helpers/chrome-mock.js';
 import {
   TAXONOMY_KEY, TTL,
   flattenCatalogs, findCatalog, sizesFromGroups, conditionsFromBody,
-  parsePriceSuggestion, isFresh, lookupCachedCatalogs, createTaxonomy
+  parsePriceSuggestion, isFresh, lookupCachedCatalogs, createTaxonomy, browseCatalogs
 } from '../lib/taxonomy.js';
 
 /** The catalog tree as the spike measured it: nested, leaves carry an empty `catalogs`. */
@@ -400,4 +400,55 @@ test('lookupCachedCatalogs: no cache and no ids are both simply empty', async ()
   assert.deepEqual(await lookupCachedCatalogs([196]), []);
   assert.deepEqual(await lookupCachedCatalogs([]), []);
   assert.deepEqual(await lookupCachedCatalogs(null), []);
+});
+
+// ---------- durch den Baum navigieren ----------
+//
+// Gemeldet am 2026-08-23: für einen Kinderpullover schlug Vinteds Stichwortsuche nur
+// „Herren > Sweatshirt" vor — ein einzelnes Blatt, also wurde es übernommen, und daran
+// hing die ganze (falsche) Größenmenge. „Kinder" ist keine Kategorie, sondern ein Weg.
+
+/** Ein Ausschnitt in der Form, die `flattenCatalogs` liefert — flach, mit Pfaden. */
+const LEAVES = [
+  { id: 1, title: 'Pullover', path: 'Kinder > Mädchen > Pullover und Jäckchen > Pullover', isLeaf: true },
+  { id: 2, title: 'Rollkragenpullover', path: 'Kinder > Mädchen > Pullover und Jäckchen > Rollkragenpullover', isLeaf: true },
+  { id: 3, title: 'Bodies', path: 'Kinder > Mädchen > Babykleidung > Bodies', isLeaf: true },
+  { id: 4, title: 'Pullover', path: 'Kinder > Jungs > Pullover & Jäckchen > Pullover', isLeaf: true },
+  { id: 5, title: 'Sweatshirts', path: 'Herren > Kleidung > Sweatshirts', isLeaf: true },
+  { id: 6, title: 'Kinder & junge Erwachsene', path: 'Bücher & andere Medien > Bücher > Kinder & junge Erwachsene', isLeaf: true }
+];
+
+test('browseCatalogs: wenige Treffer sind eine Auswahl, keine Wanderung', () => {
+  const { matches, steps } = browseCatalogs('kinder pullover', LEAVES);
+  assert.deepEqual(matches.map(m => m.id), [1, 2, 4]);
+  assert.deepEqual(steps, []);
+});
+
+test('browseCatalogs: zu viele Treffer werden zur nächsten Ebene', () => {
+  const { matches, steps } = browseCatalogs('Kinder', LEAVES, { maxMatches: 2 });
+  assert.deepEqual(matches, []);
+  // „Kinder" selbst wäre ein Schritt ins Nichts — er wird durch seine Unterebenen ersetzt.
+  assert.ok(steps.includes('Kinder > Mädchen'), steps.join(' | '));
+  assert.ok(steps.includes('Kinder > Jungs'), steps.join(' | '));
+  assert.ok(!steps.includes('Kinder'), 'ein Schritt, der das Getippte wiederholt, ist keiner');
+  // Das Wort kommt auch anderswo vor, und das zu verschweigen wäre eine Auskunft, die
+  // niemand geprüft hat.
+  assert.ok(steps.some(s => /Bücher/.test(s)), steps.join(' | '));
+});
+
+test('browseCatalogs: ein Pfad wird verankert, nicht als Wortsuche gelesen', () => {
+  // Ohne Verankerung fände „Kinder > Mädchen" auch Mädchen-Blätter außerhalb von Kinder.
+  const { matches } = browseCatalogs('Kinder > Mädchen', LEAVES);
+  assert.deepEqual(matches.map(m => m.id), [1, 2, 3]);
+});
+
+test('browseCatalogs: eine Ebene tiefer schneidet weiter zu', () => {
+  const { matches } = browseCatalogs('Kinder > Mädchen > Pullover und Jäckchen', LEAVES);
+  assert.deepEqual(matches.map(m => m.id), [1, 2]);
+});
+
+test('browseCatalogs: was nicht vorkommt, wird nicht erfunden', () => {
+  assert.deepEqual(browseCatalogs('Gibtsnicht', LEAVES), { matches: [], steps: [] });
+  assert.deepEqual(browseCatalogs('', LEAVES), { matches: [], steps: [] });
+  assert.deepEqual(browseCatalogs('Kinder', []), { matches: [], steps: [] });
 });

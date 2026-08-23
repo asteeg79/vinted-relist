@@ -245,6 +245,59 @@ einen Listeneintrag passte, stand als `ok` da und ging ungefragt raus — genau 
 §7.2 verbietet. Jetzt gilt das kleinere von beidem: ein Treffer in der Liste macht eine
 Schätzung nicht sicherer.
 
+**Nachtrag 2026-08-23 — eine ausdrückliche Wahl überstimmt die Gegenprobe.**
+
+Derselbe Kinderpullover, einen Schritt weiter: die Navigation führte auf 1672 („Kinder >
+Jungs > … > Hoodies & Sweatshirts"), und Vinteds Fotoerkennung antwortete beim
+Veröffentlichen mit 1811 („Herren > Kleidung > Pullover & Sweater > Sweater"). Entscheidung
+C leert dann das Feld und bietet beide Antworten an.
+
+Das führte im Kreis. Der Nutzer wählt seine Kategorie erneut, veröffentlicht — und Vinted
+sagt beim nächsten Mal genau dasselbe wie beim letzten. Für einen Artikel, den die
+Fotoerkennung hartnäckig falsch einordnet, gab es keinen Ausgang.
+
+Entscheidung C wägt zwei **maschinelle** Erkennungen gegeneinander, und dort ist der
+Widerspruch mehr wert als die Zuversicht einer von beiden. Ein Mensch, der den Artikel in
+der Hand hatte und aus der Liste gewählt hat, ist keine dritte Maschine. `crossCheck` lässt
+eine Auflösung mit `source: 'pick'` deshalb stehen. Der Widerspruch verschwindet nicht: er
+steht als `overriddenBy` am Feld („Vinted sieht auf den Fotos … — deine Wahl steht") und
+als `publish_override` im Protokoll. Er blockt nur nicht mehr.
+
+Dazu ein zweiter Fund aus demselben Bildschirm: im Widerspruch trug nur **Vinteds** Antwort
+ihren Pfad, die eigene nur ihren Titel — „Hoodies & Sweatshirts" gegen „Herren > Kleidung >
+Pullover & Sweater > Sweater". Dass die erste die Kinder-Kategorie ist, war daran nicht zu
+erkennen, und der Pfad ist genau das, was die beiden unterscheidet. Die Auflösung führt
+ihren Pfad jetzt mit.
+
+**Nachtrag 2026-08-23 — durch den Kategoriebaum navigieren, statt ihn zu erraten.**
+
+Für einen Kinderpullover schlug Vinteds Stichwortsuche nur „Herren > Sweatshirt" vor. Ein
+einzelnes Blatt wird übernommen (Konfidenz 0.5, bestätigungspflichtig) — und daran hängt
+alles Weitere: die Größenmenge einer Herrenkategorie kennt keine 152.
+
+Der Fehler war die Gleichsetzung von Tippen und Suchen. Ein Wort des Modells ist ein Name,
+den man nachschlägt; ein Wort des Nutzers ist der **Anfang eines Weges**. „Kinder" ist keine
+Kategorie, und Vinteds Suche kann darauf gar nicht sinnvoll antworten.
+
+`taxonomy.browseCatalogs(label, leaves)` filtert deshalb lokal über den ganzen **Pfad**,
+wortweise und als Wortanfang, und gibt eine von zwei Antworten:
+
+- **matches** — die Blätter selbst, wenn es wenige genug für ein Auswahlfeld sind
+- **steps** — sonst die nächste Ebene darunter, als Pfad ohne id. Ein Schritt ist kein
+  Ziel: das Studio schreibt ihn zurück ins Feld, und dieselbe Filterung greift eine Stufe
+  tiefer. Enthält das Getippte ein „>", wird es als Pfad **verankert**, sonst fände
+  „Kinder > Mädchen" auch Mädchen-Blätter außerhalb von Kinder.
+
+Ein Schritt, der das Getippte wiederholt, wird durch seine eigene nächste Ebene ersetzt.
+Ohne diese Regel bot „Kinder" den Schritt „Kinder" an — das Wort kommt auch in
+„Bücher & andere Medien > Bücher > Kinder & junge Erwachsene" und unter „Sport" vor, die
+gemeinsame Ebene ist deshalb die Wurzel, und wer den Schritt wählte, bekam dieselbe Liste
+zurück. Am echten Baum geprüft (2493 Blätter): „Kinder" → 14 Bereiche, „Kinder > Mädchen"
+→ 19 Bereiche, „Kinder > Mädchen > Pullover und Jäckchen" → 8 Blätter. „kinder pullover"
+führt in einem Schritt zu denselben drei Pullover-Blättern.
+
+Vinteds Suche bleibt der Ausweg, wenn der Baum das Wort gar nicht kennt („Kapuzenpulli").
+
 **Nachtrag 2026-08-23 — das getippte Größenwort war dekorativ.**
 
 Gemeldet: „„152" ist keine Vinted-Größe — anderen Begriff eintippen, z. B. „T-Shirts"".
