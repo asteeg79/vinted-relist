@@ -61,13 +61,14 @@ function ready(overrides = {}) {
   return {
     analysis: analysis(),
     settings: DEFAULT_SETTINGS,
-    // Der Katalog UND die Farbe — die beiden, deren Wert ohne Vinteds ID nichts wert ist
-    // (`NEEDS_ID`). Marke und Größe bleiben absichtlich unaufgelöst, damit die Tests um
-    // sie herum weiter die Konfidenzen des Modells prüfen; beide sind in der Payload
-    // nullbar, eine ID ist dort nicht das, was einen Draft fertig macht.
+    // Katalog, Farbe UND Größe — die drei, deren Wert ohne Vinteds ID nichts wert ist
+    // (`NEEDS_ID`). Die Größe kam am 2026-08-23 dazu, nachdem ein echtes Inserat nach dem
+    // Foto-Upload an `size: Wähle ein Größe` gescheitert war. Die Marke bleibt absichtlich
+    // unaufgelöst: sie ist in der Payload nullbar, Vinted nimmt sogar eine Freitext-Marke.
     resolved: {
       catalog: { id: 1806, label: 'Hoodie', confidence: 1, candidates: [] },
-      color: { id: 1, label: 'Schwarz', confidence: 1, candidates: [] }
+      color: { id: 1, label: 'Schwarz', confidence: 1, candidates: [] },
+      size: { id: 105, label: 'M', confidence: 1, candidates: [] }
     },
     price: { value: 18, source: 'range' },
     condition: 2,
@@ -121,7 +122,8 @@ test('draftView: the threshold is the configured one, not a constant', () => {
 });
 
 test('draftView: a missing required field is missing, not merely unconfirmed', () => {
-  const view = draftView(ready({ analysis: analysis({ size_label: null, size_source: 'none' }) }));
+  // Ohne gelesene Größe gibt es auch nichts aufzulösen — die Fixture ohne beides.
+  const view = draftView(readyWith({ size: undefined }, { analysis: analysis({ size_label: null, size_source: 'none' }) }));
   assert.equal(state(view, 'size'), FIELD_MISSING);
   assert.equal(view.canPublish, false);
   assert.ok(view.blockers.some(b => /Größe/.test(b)), view.blockers.join(' | '));
@@ -155,7 +157,7 @@ test('draftView: two equally good candidates are an ambiguity, not a pick', () =
   assert.equal(view.canPublish, false);
 });
 
-test('draftView: an ambiguous brand IS confirmable — only the category needs an id', () => {
+test('draftView: an ambiguous brand IS confirmable — the brand is the one that may stay id-less', () => {
   // The payload takes `brand_id: null` plus a free-text brand; `catalog_id: null` is a throw.
   const view = draftView(readyWith(
     { brand: { label: 'Nike', confidence: 0.99, candidates: [{ id: 1, label: 'Nike' }, { id: 2, label: 'Nike ACG' }] } },
@@ -173,6 +175,33 @@ test('draftView: der Zustand kommt nie aus einem getippten Wort', () => {
   const f = field(view, 'condition');
   assert.equal(f.id, 2);
   assert.equal(f.value, 'Sehr gut', 'Vinteds Wort zur id, nicht das getippte');
+});
+
+// ---------- warum das Preisfeld leer ist ----------
+
+test('draftView: ein fehlender Preis sagt, woran es liegt', () => {
+  const cases = [
+    ['no_brand', /Marke/],
+    ['no_comparables', /vergleichbare/],
+    ['no_category', /Kategorie/],
+    ['no_condition', /Zustand/]
+  ];
+  for (const [reason, pattern] of cases) {
+    const hint = field(draftView(ready({ price: null, priceReason: reason })), 'price').hint;
+    assert.match(hint, pattern, reason);
+  }
+});
+
+test('draftView: eine gefundene Spanne braucht keine Erklärung', () => {
+  assert.equal(field(draftView(ready()), 'price').hint, null);
+  assert.equal(field(draftView(ready({ priceReason: 'no_analysis' })), 'price').hint, null);
+});
+
+test('draftView: nur der Preis und der Zustand erklären sich — kein Feld erfindet einen Hinweis', () => {
+  const view = draftView(ready({ priceReason: 'no_brand' }));
+  for (const f of view.fields.filter(f => f.key !== 'price' && f.key !== 'condition')) {
+    assert.equal(f.hint, null, `${f.key} hat einen Hinweis erfunden`);
+  }
 });
 
 // ---------- ein eingestelltes Inserat ist ein verbrauchter Draft ----------
@@ -226,6 +255,19 @@ test('draftView: the conflict note names both answers, and does not call Blau a 
   assert.doesNotMatch(note, /keine Vinted-Farbe/, 'Blau IST eine Vinted-Farbe — Vinted sieht nur etwas anderes');
 });
 
+test('draftView: ohne Auswahl bekommt jedes Feld SEINEN Rat, nicht den der Kategorie', () => {
+  // Gemeldet am 2026-08-23: „„152" ist keine Vinted-Größe — anderen Begriff eintippen,
+  // z. B. „T-Shirts"". Ein Beispiel aus dem falschen Feld, und ein Rat, der damals ins
+  // Leere führte, weil ein getipptes Größenwort nirgends aufgelöst wurde.
+  const size = draftView(readyWith({ size: { id: null, label: '152', confidence: 0.9, candidates: [] } }));
+  const note = field(size, 'size').note;
+  assert.match(note, /keine Vinted-Größe/);
+  assert.doesNotMatch(note, /T-Shirts/, 'das Beispiel der Kategorie gehört nicht unter die Größe');
+
+  const category = draftView(readyWith({ catalog: { id: null, label: 'Hoodie', confidence: 0.9, candidates: [] } }));
+  assert.match(field(category, 'category').note, /T-Shirts/);
+});
+
 test('draftView: a colour Vinted does not know says so in its own words', () => {
   const view = draftView(readyWith({
     color: { id: null, label: 'Petrol', confidence: 0, candidates: [{ id: 9, label: 'Blau' }] }
@@ -233,18 +275,47 @@ test('draftView: a colour Vinted does not know says so in its own words', () => 
   assert.match(field(view, 'color').note, /keine Vinted-Farbe/);
 });
 
-test('draftView: brand and size stay confirmable — only category and colour need an id', () => {
-  // Beide sind in der Payload nullbar, Vinted nimmt sogar eine Freitext-Marke.
+test('draftView: die Marke darf ohne ID bleiben — sie ist in der Payload nullbar', () => {
   const view = draftView(readyWith(
-    {
-      brand: { id: null, label: 'Nike', confidence: 0.99, candidates: [] },
-      size: { id: null, label: 'M', confidence: 0.99, candidates: [] }
-    },
-    { confirmations: { condition: true, brand: true, size: true } }
+    { brand: { id: null, label: 'Nike', confidence: 0.99, candidates: [] } },
+    { confirmations: { condition: true, brand: true } }
   ));
   assert.equal(state(view, 'brand'), FIELD_OK);
-  assert.equal(state(view, 'size'), FIELD_OK);
   assert.equal(view.canPublish, true);
+});
+
+test('draftView: eine Größe ohne Vinted-ID lässt sich nicht bestätigen', () => {
+  // Der echte Fehlschlag vom 2026-08-23: das Modell las „MD/M/M" vom Etikett, das ist keine
+  // Vinted-Größe, das Feld zeigte `Größe=M[ok]` und im Kopf stand `größe=—`. Vinted lehnte
+  // den Create nach dem Foto-Upload ab: `size: Wähle ein Größe, um fortzufahren`.
+  const view = draftView(readyWith(
+    { size: { id: null, label: 'MD/M/M', confidence: 0.99, candidates: [{ id: 105, label: 'M / 38 / 10' }] } },
+    { confirmations: { condition: true, size: true } }
+  ));
+  const f = field(view, 'size');
+  assert.equal(f.state, FIELD_MISSING);
+  assert.match(f.note, /keine Vinted-Größe/);
+  assert.equal(view.canPublish, false);
+});
+
+test('draftView: wo keine Größe verlangt wird, verlangt auch niemand eine ID', () => {
+  // Medien führen gar kein Größenfeld, Accessoires eines ohne Pflicht. Die Sperre greift
+  // nur, wo das Feld auch gebraucht wird.
+  const view = draftView(ready({
+    analysis: analysis({ category_group: 'media', size_label: null, size_source: 'none' }),
+    resolved: { catalog: { id: 2319, label: 'Belletristik', confidence: 1, candidates: [] } }
+  }));
+  assert.equal(view.fields.some(f => f.key === 'size'), false);
+  assert.equal(view.canPublish, true);
+});
+
+test('draftView: eine GESCHÄTZTE Größe bleibt bestätigungspflichtig, auch wenn sie passt', () => {
+  // Vorher gewann die Konfidenz der Auflösung: eine an den Proportionen geschätzte Größe,
+  // die zufällig auf einen Listeneintrag passte, stand als `ok` da und ging ungefragt
+  // raus. Ein Treffer in der Liste macht eine Schätzung nicht sicherer (§7.2).
+  const view = draftView(ready({ analysis: analysis({ size_source: 'estimated' }) }));
+  assert.equal(field(view, 'size').id, 105, 'die ID ist da');
+  assert.equal(state(view, 'size'), FIELD_NEEDS_CONFIRMATION, 'die Herkunft ist es nicht');
 });
 
 // ---------- the category needs an id, not a word ----------

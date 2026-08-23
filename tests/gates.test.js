@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   gatesFor, describeOutcome, describeFailure,
   GATE_FIRST_RUN, GATE_COOLDOWN, GATE_INTEREST, draftGatesFor, describeDraftOutcome, GATE_FIRST_CREATE,
-  publishModeNote } from '../lib/gates.js';
+  publishModeNote, resetGateFor } from '../lib/gates.js';
 import { DEFAULT_SETTINGS } from '../lib/settings.js';
 
 const settings = (patch = {}) => ({ ...DEFAULT_SETTINGS, ...patch });
@@ -283,4 +283,23 @@ test('publishModeNote: ohne Argumente die harmloseste Aussage', () => {
   // Die Oberfläche rendert, bevor die Einstellungen geladen sind. Solange darf dort nicht
   // „scharf" stehen — und erst recht nicht umgekehrt.
   assert.equal(publishModeNote().kind, 'dry');
+});
+
+// ---------- das Studio leeren ----------
+
+test('resetGateFor: ein leeres Studio fragt nicht', () => {
+  assert.equal(resetGateFor({ hasWork: false, published: false }), null);
+  assert.equal(resetGateFor(), null);
+});
+
+test('resetGateFor: nach dem Einstellen fragt es auch nicht — das Leeren IST der nächste Schritt', () => {
+  assert.equal(resetGateFor({ hasWork: true, published: true }), null);
+});
+
+test('resetGateFor: dazwischen wird gefragt, und der Satz nennt den Verlust', () => {
+  const gate = resetGateFor({ hasWork: true, published: false });
+  assert.match(gate.title, /leeren/i);
+  assert.match(gate.note, /nur in diesem Tab/);
+  assert.equal(gate.remember, false, 'diese Frage merkt man sich nicht weg');
+  assert.deepEqual(gate.lines, [], 'jedes Gate hat ein Array, damit kein Renderer prüfen muss');
 });

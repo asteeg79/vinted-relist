@@ -33,7 +33,16 @@ function fakeTaxonomy(over = {}) {
     sizes: record('sizes', SIZES),
     conditions: record('conditions', CONDITIONS),
     statuses: record('statuses', STATUSES),
-    priceSuggestion: record('priceSuggestion', { min: 4, max: 9, midpoint: 6, grounded: true }),
+    // WIE DER ECHTE: `/api/v2/item_price_suggestions` antwortet nur auf alle drei IDs
+    // zusammen (gemessen 2026-08-23 — ohne brand_id oder status_id kommt
+    // `similar_sold_items_present: false`), und `taxonomy.priceSuggestion` fragt deshalb
+    // gar nicht erst. Ein Fake, der auch ohne Marke eine Spanne liefert, verdeckt genau
+    // den Fall, den der Nutzer als „kommt nicht zuverlässig" erlebt.
+    priceSuggestion: async ({ catalogId, brandId, statusId } = {}) => {
+      asked.push({ name: 'priceSuggestion', args: [{ catalogId, brandId, statusId }] });
+      if (catalogId == null || brandId == null || statusId == null) return null;
+      return { min: 4, max: 9, midpoint: 6, grounded: true };
+    },
     ...over
   };
   t.asked = asked;
@@ -386,6 +395,41 @@ test('lookupDraft: a taxonomy without the search member is fine — nothing thro
   assert.equal(r.resolved.catalog.id, null);
 });
 
+// ---------- warum keine Preisspanne kam ----------
+//
+// Gemessen am 2026-08-23: `/api/v2/item_price_suggestions` antwortet nur auf Kategorie,
+// Marke UND Zustand zusammen — fehlt eines, kommt `similar_sold_items_present: false`.
+// Und ganze Kategoriefamilien (Bücher, Comics, Briefmarken, Schreibwaren) haben gar keine
+// Vergleichsverkäufe. Beides ist ein Befund; ein leeres Feld sieht aber aus wie ein
+// Aussetzer, und genau so wurde es berichtet.
+
+test('lookupDraft: eine gefundene Spanne nennt keinen Grund', async () => {
+  const r = await lookupDraft({ analysis: analysis(), taxonomy: fakeTaxonomy(), condition: 2 });
+  assert.equal(r.price.value, 6);
+  assert.equal(r.priceReason, null);
+});
+
+test('lookupDraft: ohne Marke wird gar nicht erst gefragt, und das steht auch da', async () => {
+  const r = await lookupDraft({
+    analysis: analysis({ brand: 'Gibtsnicht' }), taxonomy: fakeTaxonomy(), condition: 2
+  });
+  assert.equal(r.resolved.brand.id, null);
+  assert.equal(r.price, null);
+  assert.equal(r.priceReason, 'no_brand');
+});
+
+test('lookupDraft: keine Vergleichsverkäufe ist etwas anderes als eine fehlende Angabe', async () => {
+  const taxonomy = fakeTaxonomy({ priceSuggestion: async () => null });
+  const r = await lookupDraft({ analysis: analysis(), taxonomy, condition: 2 });
+  assert.equal(r.priceReason, 'no_comparables');
+});
+
+test('lookupDraft: ohne Kategorie hängt der Preis an ihr, nicht an Vinted', async () => {
+  const r = await lookupDraft({ analysis: analysis({ type: 'Gibtsnicht' }), taxonomy: fakeTaxonomy({ searchCatalogs: async () => [] }), condition: 2 });
+  assert.equal(r.resolved.catalog.id, null);
+  assert.equal(r.priceReason, 'no_category');
+});
+
 // ---------- ein Widerspruch überlebt das Nachschlagen ----------
 
 /** Die Farbe, wie `crossCheck` sie nach einem Widerspruch hinterlässt. */
@@ -474,6 +518,47 @@ test('lookupDraft: a condition the list no longer offers is re-chosen, provenanc
   });
   assert.equal(r.condition.id, 2, 'Vinteds „Sehr gut"');
   assert.equal(r.condition.source, 'default');
+});
+
+test('lookupDraft: eine unauflösbare Größe bietet die Größenmenge der Kategorie an', async () => {
+  // Seit die Größe ohne ID blockt, braucht „bitte von Hand wählen" etwas zum Wählen.
+  const r = await lookupDraft({
+    analysis: analysis({ size_label: 'Gibtsnicht' }), taxonomy: fakeTaxonomy(), condition: 2
+  });
+  assert.equal(r.resolved.size.id, null);
+  assert.deepEqual(r.resolved.size.candidates.map(c => c.id), SIZES.map(s => s.id));
+  assert.ok(r.warnings.some(w => /Größe/.test(w)));
+});
+
+test('lookupDraft: was der Nutzer als Größe tippt, wird aufgelöst', async () => {
+  // Bis 0.98.0 war das Feld dekorativ: der Hinweis riet „anderen Begriff eintippen", und
+  // das Getippte landete nirgends. Wer „152" tippte, las denselben Satz noch einmal.
+  const r = await lookupDraft({
+    analysis: analysis({ size_label: 'Gibtsnicht' }),
+    taxonomy: fakeTaxonomy(), condition: 2,
+    labels: { size: 'M' }
+  });
+  assert.equal(r.resolved.size.id, 105);
+});
+
+test('lookupDraft: auch ohne gelesene Größe steht die Liste zur Wahl', async () => {
+  // Die Bedingung hing an `analysis.size_label` — hatte das Modell nichts gelesen, gab es
+  // auch nichts auszuwählen, während das Feld gleichzeitig eine ID verlangte.
+  const r = await lookupDraft({
+    analysis: analysis({ size_label: null, size_source: 'none' }), taxonomy: fakeTaxonomy(), condition: 2
+  });
+  assert.equal(r.resolved.size.id, null);
+  assert.deepEqual(r.resolved.size.candidates.map(c => c.id), SIZES.map(s => s.id));
+  assert.equal(r.warnings.length, 0, 'ohne gelesene Größe gibt es auch nichts zu beklagen');
+});
+
+test('lookupDraft: „MD/M/M" vom Etikett findet Vinteds „M / 38 / 10"', async () => {
+  // Der echte Fehlschlag vom 2026-08-23: Under Armour näht „MD/M/M" ein. Als Ganzes ist
+  // das keine Vinted-Größe, und `splitOn` zerlegte nur Vinteds Seite.
+  const r = await lookupDraft({
+    analysis: analysis({ size_label: 'MD/M/M' }), taxonomy: fakeTaxonomy(), condition: 2
+  });
+  assert.equal(r.resolved.size.id, 105);
 });
 
 // ---------- the colour always has a way out ----------

@@ -15,7 +15,7 @@ import { readCachedKey } from '../lib/secret.js';
 import { analyse } from '../lib/ai.js';
 import { draftView, conflictedFields, FIELD_NEEDS_CONFIRMATION } from '../lib/draft-view.js';
 import { loadPriceMemory, savePrice } from '../lib/price-memory.js';
-import { publishModeNote } from '../lib/gates.js';
+import { publishModeNote, resetGateFor } from '../lib/gates.js';
 import { HARD_MAX, SOFT_MAX } from '../lib/title.js';
 import { createTaxonomy } from '../lib/taxonomy.js';
 import { createVintedFetch } from '../lib/vinted-read.js';
@@ -57,6 +57,8 @@ const state = {
   /** { source: 'ai' | 'default' | 'user' | null, evidence } — where state.condition came from */
   conditionMeta: {},
   lookupWarnings: [],
+  /** Warum keine Preisspanne kam — der Satz dazu steht in lib/draft-view.js. */
+  priceReason: null,
   picks: {},
   price: null,
   condition: null,
@@ -64,6 +66,49 @@ const state = {
   publishedId: null,
   busy: false
 };
+
+/**
+ * Alles vergessen, was zu EINEM Artikel gehört — für den nächsten.
+ *
+ * WAS BLEIBT UND WARUM. Die Einstellungen, das Preisgedächtnis und der Taxonomie-Cache
+ * (Kategoriebaum, Farben, Größen je Kategorie) gehören nicht zum Artikel: sie gelten für
+ * jeden. Sie stehen zudem in `chrome.storage`, überleben also ohnehin jedes Neuladen der
+ * Seite — sie hier zu löschen hieße, den 486 KB großen Baum beim nächsten Artikel erneut
+ * zu holen.
+ *
+ * WAS GEHT, geht vollständig: die Fotos samt ihrer Object-URLs (die der Browser sonst bis
+ * zum Schließen des Tabs festhält, zwei je Foto), die Erkennung, jede aufgelöste ID, jede
+ * Bestätigung, jedes getippte Wort, der Preis und die eingestellte Inseratsnummer. Was
+ * davon stehen bliebe, würde am nächsten Artikel als seine eigene Angabe erscheinen — und
+ * eine bestätigte Marke vom Vorgänger ist genau die Sorte Fehler, die niemand bemerkt.
+ */
+function resetDraft() {
+  for (const photo of state.photos) {
+    URL.revokeObjectURL(photo.url);
+    URL.revokeObjectURL(photo.modelUrl);
+  }
+  Object.assign(state, {
+    photos: [],
+    analysis: null,
+    confirmations: {},
+    overrides: {},
+    resolved: {},
+    conditions: [],
+    conditionMeta: {},
+    lookupWarnings: [],
+    priceReason: null,
+    picks: {},
+    price: null,
+    condition: null,
+    publishedId: null
+  });
+  $('descOut').value = '';
+  setIntake('');
+  setAnalyse('');
+  setPublish('');
+  log('studio_reset', {});
+  render();
+}
 
 /** The read transport the spike unlocked: straight from this tab, no Vinted tab needed. */
 const taxonomy = createTaxonomy({
@@ -229,12 +274,13 @@ async function runLookup() {
       previous: state.resolved,
       settings: state.settings || {},
       // What the user typed wins over what the model called the article.
-      labels: { category: state.overrides.category }
+      labels: { category: state.overrides.category, size: state.overrides.size }
     });
     state.resolved = result.resolved;
     state.conditions = result.conditions;
     state.lookupWarnings = result.warnings;
     state.price = result.price;
+    state.priceReason = result.priceReason;
     // The cursor position for the condition, decided in lib/condition.js: the model's
     // reading when it was sure enough, otherwise the configured default. Either way it
     // still has to be confirmed.
@@ -253,6 +299,7 @@ async function runLookup() {
       size: result.resolved.size?.id ?? null,
       color: result.resolved.color?.id ?? null,
       price: result.price?.value ?? null,
+      priceReason: result.priceReason,
       // Enough to tell the two size failures apart without another round trip: did the
       // model read nothing, or did Vinted's set not contain what it read?
       sizeRead: state.analysis?.size_label ?? null,
@@ -392,6 +439,7 @@ function currentView() {
     confirmations: state.confirmations,
     overrides: state.overrides,
     priceMemory: state.priceMemory,
+    priceReason: state.priceReason,
     publishedId: state.publishedId,
     photos: state.photos.map(p => ({
       touchesEdge: p.touchesEdge,
@@ -475,6 +523,12 @@ function renderDerived(view = currentView()) {
   $('publish').disabled = state.busy || !view.canPublish || !state.photos.length;
   $('publish').querySelector('.btn-label')?.replaceChildren(document.createTextNode(mode.button));
   $('publishHint').textContent = mode.hint;
+
+  // Nach dem Einstellen ist Leeren der nächste Schritt, nicht mehr eine Nebentür.
+  const done = state.publishedId != null;
+  $('reset').disabled = state.busy;
+  $('reset').className = done ? 'btn-primary' : 'btn-secondary';
+  $('reset').textContent = done ? 'Nächster Artikel' : 'Studio leeren — nächster Artikel';
 }
 
 function renderPhotos(view) {
@@ -631,6 +685,43 @@ function renderFields(view) {
   });
 }
 
+/**
+ * Felder, deren getipptes Wort eine neue Frage an Vinted ist — und wo die Antwort landet.
+ *
+ * Beides sind Felder mit `NEEDS_ID`: ein Wort ohne Vinted-ID blockt, also muss das Tippen
+ * eine ID beschaffen können. Die Farbe steht nicht dabei, weil sie ihre ganze Liste als
+ * Auswahl anbietet und Tippen dort nichts hinzufügt.
+ */
+const RELOOKUP_ON_TYPE = { category: 'catalog', size: 'size' };
+
+/**
+ * Ein getipptes Wort nachschlagen, und den Fund festnageln.
+ *
+ * Der zweite Durchgang ist kein Umweg: er macht aus dem Treffer eine Wahl (`picks`) und
+ * wirft den getippten Text weg, damit im Feld Vinteds eigene Schreibweise steht und das
+ * nächste Nachschlagen nicht wieder vom Wort des Modells ausgeht.
+ */
+async function retypeField(key) {
+  const resolvedKey = RELOOKUP_ON_TYPE[key];
+  const label = { category: 'Kategorie', size: 'Größe' }[key];
+
+  delete state.picks[key]; // das getippte Wort ersetzt eine frühere Wahl
+  setAnalyse(`Schlage die ${label} nach…`, 'working');
+
+  let failed = await runLookup();
+  const found = failed ? null : state.resolved[resolvedKey]?.id;
+  if (found != null) {
+    state.picks[key] = found;
+    delete state.overrides[key];
+    failed = await runLookup();
+  }
+  // Ein 401 hat Vorrang vor jedem Befund — „nicht gefunden" wäre dann schlicht gelogen.
+  setAnalyse(
+    failed || (found != null ? `${label}: ${state.resolved[resolvedKey].label}` : `Keine passende ${label} gefunden.`),
+    (failed || found == null) ? 'error' : 'ok'
+  );
+}
+
 function valueInput(field) {
   const input = document.createElement('input');
   input.className = 'field-value';
@@ -652,24 +743,10 @@ function valueInput(field) {
   input.addEventListener('change', async () => {
     if (field.key === 'price') await rememberCurrentPrice();
     // A retyped category is a new question for Vinted, not just new text: the size set,
-    // the brand list and the price range all hang off it.
-    if (field.key === 'category') {
-      delete state.picks.category; // the typed word replaces an earlier choice
-      setAnalyse('Schlage die Kategorie nach…', 'working');
-      let failed = await runLookup();
-      const found = failed ? null : state.resolved.catalog?.id;
-      if (found != null) {
-        // Nail it down as a pick and drop the typed text, so the field shows Vinted's own
-        // wording and the next lookup does not have to find it again from the model's word.
-        state.picks.category = found;
-        delete state.overrides.category;
-        failed = await runLookup();
-      }
-      // "Keine passende Kategorie gefunden" wäre bei einem 401 schlicht gelogen — der
-      // Fehler hat Vorrang vor jedem Befund.
-      setAnalyse(failed || (found != null ? `Kategorie: ${state.resolved.catalog.label}` : 'Keine passende Kategorie gefunden.'),
-        (failed || found == null) ? 'error' : 'ok');
-    }
+    // the brand list and the price range all hang off it. Dasselbe gilt für die Größe —
+    // ein getipptes „152" war bis 0.98.0 dekorativ, und der Hinweis „anderen Begriff
+    // eintippen" schickte den Nutzer damit im Kreis.
+    if (RELOOKUP_ON_TYPE[field.key]) await retypeField(field.key);
     render();
   });
   return input;
@@ -918,6 +995,17 @@ $('descOut').addEventListener('input', () => {
   renderDerived();
 });
 $('descOut').addEventListener('change', render);
+
+$('reset').addEventListener('click', async () => {
+  if (state.busy) return;
+  // Die Rückfrage entscheidet lib/gates.js — hier wird sie nur gezeigt.
+  const gate = resetGateFor({
+    hasWork: state.photos.length > 0 || !!state.analysis,
+    published: state.publishedId != null
+  });
+  if (gate && !await askGate(gate)) return;
+  resetDraft();
+});
 
 $('copyAll').addEventListener('click', async () => {
   const view = currentView();

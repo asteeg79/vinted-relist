@@ -220,6 +220,67 @@ Blätter haben `catalogs: []`. Der Baum trägt **keine** Größengruppe — die 
 Kategorie und wird einzeln geholt. Das ist die Reihenfolge aus §6.2 des Konzepts, von
 Vinted selbst erzwungen: erst Kategorie, dann die dafür gültige Größenmenge.
 
+**Nachtrag 2026-08-23 — die Größe braucht eine ID, und das Etikett trägt mehrere Systeme.**
+
+Ein echtes Inserat scheiterte **nach** dem Foto-Upload:
+`400 {"field":"size","value":"Wähle ein Größe, um fortzufahren"}`. Auf dem Bildschirm
+stand `Größe=M[ok]`, im Kopf `größe=—`. Zwei Fehler übereinander:
+
+1. **`splitOn` zerlegte nur Vinteds Seite.** Vinted schreibt „M / 38 / 10", und dafür war
+   die Regel gedacht. Das Etikett trägt aber genauso oft mehrere Systeme: Under Armour
+   näht „MD/M/M" ein, eine Jeans „38/40". Als Ganzes ist das nie eine Vinted-Größe, und
+   ungetrennt fand es nichts. Jetzt werden beide Seiten zerlegt; treffen mehrere Teile
+   mehrere Einträge, ist das eine Auswahl und keine Entscheidung.
+2. **`NEEDS_ID` führte die Größe nicht.** Dort stand, sie sei „in der Payload nullbar" —
+   Vinted sieht das anders. Ein Wort ohne ID sieht bei der Größe genauso gefüllt aus wie
+   bei der Kategorie, stand auf `ok` und gab das Veröffentlichen frei. Die Prüfung greift
+   nur, wo das Feld auch verlangt wird: Medien und Accessoires ändern sich nicht.
+
+Dazu der Ausweg, ohne den die Sperre eine Sackgasse wäre — `lookup.js` bietet die
+Größenmenge der Kategorie als Auswahl an, sobald nichts passt.
+
+Beim Nachziehen der Test-Fixture fiel ein dritter Fehler auf: die Konfidenz der Auflösung
+überschrieb die der Quelle. Eine an den Proportionen **geschätzte** Größe, die zufällig auf
+einen Listeneintrag passte, stand als `ok` da und ging ungefragt raus — genau das, was
+§7.2 verbietet. Jetzt gilt das kleinere von beidem: ein Treffer in der Liste macht eine
+Schätzung nicht sicherer.
+
+**Nachtrag 2026-08-23 — das getippte Größenwort war dekorativ.**
+
+Gemeldet: „„152" ist keine Vinted-Größe — anderen Begriff eintippen, z. B. „T-Shirts"".
+Zwei Fehler in einem Satz, und der zweite ist der schlimmere.
+
+**Der Rat kam aus dem falschen Feld.** `NEEDS_ID` hielt nur das Wort für die Sache; der
+Nachsatz war für alle drei Felder derselbe — der der Kategorie. Jetzt trägt jeder Eintrag
+seinen eigenen Rat.
+
+**Und er führte ins Leere.** Die Größe wurde nur aus `analysis.size_label` aufgelöst; was
+der Nutzer tippte, landete in `overrides.size` und wurde nirgends nachgeschlagen — genau
+der Zustand, in dem das Kategoriefeld bis 0.81.0 war. Wer dem Rat folgte und „152" tippte,
+las denselben Satz noch einmal: eine geschlossene Schleife. Dazu hing die Kandidatenliste
+ebenfalls an `analysis.size_label`, sodass ausgerechnet im getippten Fall auch nichts zur
+Auswahl stand.
+
+Drei Änderungen: `lookupDraft` nimmt `labels.size` entgegen; die Größenliste steht immer
+zur Wahl, sobald eine Größe verlangt wird und keine ID dahintersteht; und das Studio
+behandelt ein getipptes Größenwort wie ein getipptes Kategoriewort (nachschlagen, den Fund
+als Wahl festnageln, den getippten Text wegwerfen).
+
+Gegen die echte Liste geprüft: „152" trifft in Kategorie 1542 (Kinder > Mädchen >
+Pullover) genau einen der 31 Einträge — `631 "12 Jahre / 152"`.
+
+**Nachtrag 2026-08-23 — warum kein Preisvorschlag kommt.**
+
+`/api/v2/item_price_suggestions` antwortet nur auf Kategorie, Marke **und** Zustand
+zusammen; fehlt eines, kommt `similar_sold_items_present: false` (gemessen). Und selbst mit
+allen dreien gibt es ganze Kategoriefamilien ohne Vergleichsverkäufe — Belletristik,
+Sachbücher, Comics, Briefmarken, Notizbücher antworten alle leer, während 24 geprüfte
+Marke/Zustand-Kombinationen in Kategorie 1806 ausnahmslos eine Spanne liefern.
+
+Es gibt also vier Lagen ohne Preis, und drei davon sind ordentliche Befunde. Bisher blieb
+das Feld dabei leer, und ein leeres Feld sieht aus wie ein Aussetzer. `lookupDraft` gibt
+jetzt einen `priceReason` zurück, den `draft-view.js` als Satz unter das Preisfeld schreibt.
+
 **Nachtrag 2026-08-21 — auch die Farbe braucht eine ID, und ein Widerspruch ist nicht bestätigbar.**
 
 Derselbe Fehler wie bei der Kategorie, von der anderen Seite. Widerspricht die Gegenprobe

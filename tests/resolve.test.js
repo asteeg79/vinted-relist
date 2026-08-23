@@ -237,3 +237,32 @@ test('crossCheck: a suggested id we have no candidate for is ignored, not invent
   assert.equal(checked.id, 53, 'an unknown suggestion cannot unseat a direct hit');
   assert.equal(checked.agreed, true);
 });
+
+// ---------- das Etikett trägt genauso oft mehrere Systeme wie Vinteds Liste ----------
+
+test('exactMatch: „MD/M/M" vom Etikett trifft „M / 38 / 10"', () => {
+  // Der echte Fehlschlag vom 2026-08-23. `splitOn` zerlegte nur Vinteds Titel, nie das
+  // Gelesene — als Ganzes ist „MD/M/M" nie eine Vinted-Größe, und der Create scheiterte
+  // nach dem Foto-Upload an `size: Wähle ein Größe`.
+  const sizes = [
+    { id: 104, title: 'S / 36 / 8' },
+    { id: 105, title: 'M / 38 / 10' },
+    { id: 106, title: 'L / 40 / 12' }
+  ];
+  const hits = exactMatch('MD/M/M', sizes, { splitOn: '/' });
+  assert.deepEqual(hits.map(h => h.id), [105]);
+});
+
+test('exactMatch: „38/40" trifft beides und ist damit eine Auswahl, keine Entscheidung', () => {
+  const sizes = [{ id: 105, title: 'M / 38 / 10' }, { id: 106, title: 'L / 40 / 12' }];
+  const hits = exactMatch('38/40', sizes, { splitOn: '/' });
+  assert.deepEqual(hits.map(h => h.id), [105, 106]);
+  assert.equal(resolveField({ label: '38/40', candidates: sizes, splitOn: '/' }).id, null);
+});
+
+test('exactMatch: ohne splitOn wird nichts zerlegt — auch das Gelesene nicht', () => {
+  // Der Grund, warum das nur für Größen gilt: eine Marke „Nike / Jordan" darf nicht auf
+  // „Jordan" passen, und ein getipptes „Nike/Adidas" erst recht nicht auf beide.
+  const brands = [{ id: 1, title: 'Nike' }, { id: 2, title: 'Jordan' }];
+  assert.deepEqual(exactMatch('Nike/Jordan', brands), []);
+});
