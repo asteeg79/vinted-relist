@@ -226,12 +226,23 @@ test('draftView: nach dem Einstellen blockt derselbe Draft — sonst gibt es das
   // ist. Wer die Erfolgsmeldung übersieht, verkauft ein Stück zweimal.
   const view = draftView(ready({ publishedId: 9733959264 }));
   assert.equal(view.canPublish, false);
-  assert.ok(view.blockers.some(b => /9733959264/.test(b)), view.blockers.join(' | '));
+  assert.equal(view.done, true);
+  assert.equal(view.publishedId, 9733959264);
+});
+
+test('draftView: ein fertiges Inserat ist KEIN Blocker — es fehlt ja nichts', () => {
+  // Es stand als Blocker da und landete damit unter „Noch offen": „Bereits eingestellt
+  // (Inserat …)". Das liest sich wie ein Mangel und ist der Erfolg. `blockers` beantwortet
+  // „was fehlt noch" — ein fertiges Inserat gehört in keine Antwort darauf.
+  const view = draftView(ready({ publishedId: 9733959264 }));
+  assert.deepEqual(view.blockers, []);
 });
 
 test('draftView: ohne eingestelltes Inserat blockt nichts', () => {
   for (const publishedId of [null, undefined]) {
-    assert.equal(draftView(ready({ publishedId })).canPublish, true);
+    const view = draftView(ready({ publishedId }));
+    assert.equal(view.canPublish, true);
+    assert.equal(view.done, false);
   }
 });
 

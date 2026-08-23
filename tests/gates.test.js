@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   gatesFor, describeOutcome, describeFailure,
   GATE_FIRST_RUN, GATE_COOLDOWN, GATE_INTEREST, draftGatesFor, describeDraftOutcome, GATE_FIRST_CREATE,
-  publishModeNote, resetGateFor } from '../lib/gates.js';
+  publishModeNote, publishedNote, resetGateFor } from '../lib/gates.js';
 import { DEFAULT_SETTINGS } from '../lib/settings.js';
 
 const settings = (patch = {}) => ({ ...DEFAULT_SETTINGS, ...patch });
@@ -302,4 +302,18 @@ test('resetGateFor: dazwischen wird gefragt, und der Satz nennt den Verlust', ()
   assert.match(gate.note, /nur in diesem Tab/);
   assert.equal(gate.remember, false, 'diese Frage merkt man sich nicht weg');
   assert.deepEqual(gate.lines, [], 'jedes Gate hat ein Array, damit kein Renderer prüfen muss');
+});
+
+// ---------- der fertige Draft ----------
+
+test('publishedNote: ohne Inserat gibt es nichts zu melden', () => {
+  assert.equal(publishedNote({ publishedId: null }), null);
+  assert.equal(publishedNote(), null);
+});
+
+test('publishedNote: mit Inserat nennt sie die Nummer und den nächsten Schritt', () => {
+  const note = publishedNote({ publishedId: 9748658270 });
+  assert.equal(note.kind, 'ok', 'ein Erfolg wird nicht als Warnung gerendert');
+  assert.match(note.text, /9748658270/, 'die Nummer ist das Einzige, womit man es wiederfindet');
+  assert.match(note.text, /Nächster Artikel/);
 });

@@ -422,6 +422,8 @@ body {
 
 .hint { font-size: 11.5px; color: var(--ink-3); margin: 10px 0 0; }
 .hint.warn { color: var(--warn-fg); font-weight: 600; }
+/* Ein fertiges Inserat ist ein Erfolg — es stand einmal unter „Noch offen". */
+.hint.is-done { color: var(--ok-fg); font-weight: 600; }
 
 /* ---------- Log ----------
    Deliberately the popup's panel, copied rule for rule: the same collapsed <details>, the

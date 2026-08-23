@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Vinted Relist",
-  "version": "0.100.0",
+  "version": "0.101.0",
   "description": "Delete and repost a Vinted listing from its URL to bump it to the top of search.",
   "permissions": [
     "storage",

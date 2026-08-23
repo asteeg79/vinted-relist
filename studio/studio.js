@@ -15,7 +15,7 @@ import { readCachedKey } from '../lib/secret.js';
 import { analyse } from '../lib/ai.js';
 import { draftView, conflictedFields, FIELD_NEEDS_CONFIRMATION } from '../lib/draft-view.js';
 import { loadPriceMemory, savePrice } from '../lib/price-memory.js';
-import { publishModeNote, resetGateFor } from '../lib/gates.js';
+import { publishModeNote, publishedNote, resetGateFor } from '../lib/gates.js';
 import { HARD_MAX, SOFT_MAX } from '../lib/title.js';
 import { createTaxonomy } from '../lib/taxonomy.js';
 import { createVintedFetch } from '../lib/vinted-read.js';
@@ -522,13 +522,17 @@ function renderDerived(view = currentView()) {
   const mode = publishModeNote({ settings: state.settings || {} });
   $('publish').disabled = state.busy || !view.canPublish || !state.photos.length;
   $('publish').querySelector('.btn-label')?.replaceChildren(document.createTextNode(mode.button));
-  $('publishHint').textContent = mode.hint;
+
+  // Ist der Draft fertig, steht das statt des Modus-Hinweises da — der erklärt, was ein
+  // Klick bewirken WÜRDE, und das ist hier nicht mehr die Frage.
+  const done = publishedNote({ publishedId: view.publishedId });
+  $('publishHint').textContent = done ? done.text : mode.hint;
+  $('publishHint').className = done ? 'hint is-done' : 'hint';
 
   // Nach dem Einstellen ist Leeren der nächste Schritt, nicht mehr eine Nebentür.
-  const done = state.publishedId != null;
   $('reset').disabled = state.busy;
-  $('reset').className = done ? 'btn-primary' : 'btn-secondary';
-  $('reset').textContent = done ? 'Nächster Artikel' : 'Studio leeren — nächster Artikel';
+  $('reset').className = view.done ? 'btn-primary' : 'btn-secondary';
+  $('reset').textContent = view.done ? 'Nächster Artikel' : 'Studio leeren — nächster Artikel';
 }
 
 function renderPhotos(view) {
