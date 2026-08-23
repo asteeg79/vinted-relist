@@ -1,0 +1,263 @@
+/* =============================================================================
+   klar.css — Theme-Layer „Klar" für den Popup
+   -----------------------------------------------------------------------------
+   Wird NACH popup.css geladen und überschreibt nur Erscheinung, keine Struktur.
+   Es wird keine Zeile in popup.css geändert; zum Zurückrollen den <link> entfernen.
+
+   Die Richtung in drei Regeln:
+     1. Weiße Flächen, keine Radien, keine Schatten außer dem Fensterschatten.
+     2. Teal ist Kopfband und die EINE primäre Aktion — sonst nichts.
+     3. Status ist eine 3-px-Kante links plus getönte Fläche. Rot bleibt Fehlern.
+   ========================================================================== */
+
+:root {
+  --radius: 0px;
+  --radius-lg: 0px;
+  --line: #dfe3e5;
+  --line-soft: #eef1f2;
+  --ink: #0d1214;
+  --ink-2: #3c464a;
+  --ink-3: #8d979b;
+  --bg-soft: #fafbfb;
+  /* Signalfarben: Kante + Fläche, paarweise */
+  --ok-edge: #1d6b3a;
+  --ok-bg: #f4faf6;
+  --ok-fg: #14512c;
+  --warn-edge: #b57a12;
+  --warn-bg: #fdf9f1;
+  --warn-fg: #6b4a00;
+  --err-edge: #a12a2a;
+  --err-bg: #fdf5f5;
+  --err-fg: #7a1919;
+  /* Ink = irreversibel. Nicht Rot: Rot heißt „etwas ist schiefgegangen". */
+  --danger-ink: #0d1214;
+}
+
+body {
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- Kopfband ---------- */
+.header {
+  background: var(--teal-dark);
+  border-bottom: 0;
+  padding: 12px 16px;
+}
+
+.brand { gap: 10px; }
+
+.brand-mark { width: 18px; height: 18px; color: #fff; }
+
+.brand-text h1 {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  text-transform: uppercase;
+  color: #fff;
+}
+
+.subtitle { display: none; }
+
+.header .icon-btn { color: #b8ebee; }
+.header .icon-btn:hover { background: rgba(255, 255, 255, 0.12); color: #fff; }
+
+.settings-header h1 {
+  margin-left: 6px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  text-transform: uppercase;
+  color: #fff;
+}
+
+/* ---------- Felder ---------- */
+.main { padding: 14px 16px; }
+
+.field label { letter-spacing: 0.1em; font-weight: 700; color: var(--ink-3); }
+
+input[type="url"] {
+  background: #fff;
+  border-radius: 0;
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+input[type="url"]:focus { box-shadow: none; border-color: var(--teal-dark); }
+
+/* ---------- Aktionen ---------- */
+.btn-primary {
+  border-radius: 0;
+  box-shadow: none;
+  font-size: 12.5px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  padding: 11px 14px;
+}
+
+.btn-primary:hover:not(:disabled) { box-shadow: none; }
+.btn-primary:active:not(:disabled) { transform: none; box-shadow: none; }
+.btn-primary:disabled { background: var(--line-soft); color: var(--ink-3); opacity: 1; }
+
+.btn-secondary,
+.btn-primary-sm {
+  border-radius: 0;
+  font-size: 12px;
+}
+
+.btn-primary-sm { letter-spacing: 0.02em; text-transform: uppercase; }
+
+/* Die zerstörende Bestätigung ist Ink, nicht Rot. */
+#gateProceed { background: var(--danger-ink); }
+#gateProceed:hover { background: #000; }
+
+/* ---------- Zähler als Kontingent, nicht als Zahl ---------- */
+.counter-row {
+  justify-content: space-between;
+  padding-top: 12px;
+  margin-top: 14px;
+  border-top: 1px solid var(--line-soft);
+  font-size: 11px;
+  color: var(--ink-2);
+}
+
+.counter-value { color: var(--ink); font-weight: 700; }
+.counter-sep { display: none; }
+
+/* ---------- Status: Kante links ---------- */
+.status:not(:empty) {
+  border-radius: 0;
+  border-left: 3px solid transparent;
+  padding: 12px 14px;
+  line-height: 1.5;
+}
+
+.status.ok      { border-left-color: var(--ok-edge); }
+.status.warning,
+.status.working { border-left-color: var(--warn-edge); }
+.status.error   { border-left-color: var(--err-edge); }
+
+.warn-box {
+  border: 0;
+  border-left: 3px solid var(--warn-edge);
+  border-radius: 0;
+  padding: 12px 14px;
+}
+
+/* ---------- Fortschritt: dünn und ruhig ---------- */
+.progress-track { height: 3px; border-radius: 0; background: var(--line-soft); }
+.progress-fill { background: var(--teal); border-radius: 0; }
+.progress-pct { color: var(--teal-dark); font-weight: 700; }
+
+/* ---------- Einstellungen ---------- */
+/* Die drei Gruppen sind durchnummeriert — die Reihenfolge ist die Reihenfolge,
+   in der man sie braucht, und die Nummer sagt das laut. */
+#viewSettings .main { counter-reset: klar-section; }
+
+.setting-section {
+  border-top: 0;
+  border-bottom: 1px solid var(--line-soft);
+  margin-top: 0;
+  padding: 12px 0 6px;
+  letter-spacing: 0.1em;
+  font-size: 10px;
+}
+
+.setting-section::before {
+  counter-increment: klar-section;
+  content: counter(klar-section) " · ";
+}
+
+.setting-row { border-bottom-color: var(--line-soft); }
+
+.setting-select,
+.setting-input,
+.setting-textarea,
+.inline-input { border-radius: 0; }
+
+.setting-textarea { font-family: "SF Mono", Menlo, Consolas, monospace; }
+
+.toggle { border-radius: 0; width: 34px; height: 18px; }
+.toggle::after { border-radius: 0; width: 14px; height: 14px; box-shadow: none; }
+.toggle:checked::after { transform: translateX(16px); }
+
+input[type="range"] { height: 3px; border-radius: 0; }
+input[type="range"]::-webkit-slider-thumb {
+  border-radius: 0;
+  width: 11px;
+  height: 11px;
+  background: var(--teal-dark);
+}
+
+/* KI-Zugang: die Karte trägt die Lage als Kante, das Badge als Wort. */
+.key-panel {
+  border: 0;
+  border-left: 3px solid var(--line);
+  border-bottom: 1px solid var(--line-soft);
+  border-radius: 0;
+  margin-top: 0;
+  padding: 12px 14px;
+}
+
+.key-panel:has(.key-badge.is-warn) {
+  border-left-color: var(--warn-edge);
+  background: var(--warn-bg);
+}
+
+.key-panel:has(.key-badge.is-ok) {
+  border-left-color: var(--ok-edge);
+  background: var(--ok-bg);
+}
+
+.key-badge {
+  border-radius: 0;
+  border: 1px solid var(--line);
+  background: transparent;
+  padding: 1px 6px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.key-badge.is-ok   { background: transparent; border-color: #a9d5b8; color: var(--ok-fg); }
+.key-badge.is-warn { background: transparent; border-color: #e3c98c; color: var(--warn-fg); }
+
+/* Der eine Schalter, der etwas öffentlich macht: scharf = rote Kante, Testlauf = grau.
+   :has() liest den Hinweistext, den popup.js schon auf .is-live setzt. */
+.setting-row.is-emphasis {
+  border: 0;
+  border-left: 3px solid var(--line);
+  border-bottom: 1px solid var(--line-soft);
+  border-radius: 0;
+  margin-top: 0;
+  padding: 12px 14px;
+  background: var(--bg-soft);
+}
+
+.setting-row.is-emphasis:has(.setting-hint.is-live) {
+  border-left-color: var(--err-edge);
+  background: var(--err-bg);
+}
+
+/* ---------- Log & Verlauf ---------- */
+.log {
+  margin-top: 0;
+  border-top: 1px solid var(--line-soft);
+  padding-top: 0;
+}
+
+.log summary {
+  padding: 11px 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+#log-output { border-radius: 0; }
+
+.history-list li { border-bottom-color: var(--line-soft); }
+.history-title { font-weight: 700; }
+
+/* ---------- Fuß ---------- */
+.footer { border-top-color: var(--line-soft); }

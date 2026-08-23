@@ -1,0 +1,323 @@
+/* =============================================================================
+   klar.css — Theme-Layer „Klar" für das Studio
+   -----------------------------------------------------------------------------
+   Wird NACH studio.css geladen und überschreibt nur Erscheinung, keine Struktur.
+   studio.css bleibt unangetastet; zum Zurückrollen den <link> entfernen.
+
+   Zwei inhaltliche Entscheidungen stecken hier drin:
+     · Die Spalten sind 1 → 2 → 3 von links nach rechts, und Prüfen bekommt den
+       Platz (1fr), weil dort die Arbeit passiert. Die Reihenfolge im DOM war
+       schon richtig — nur die Breiten haben gelogen.
+     · Scharf ist Ink, nicht Rot. Rot heißt „etwas ist schiefgegangen";
+       ein Inserat, das gleich öffentlich wird, ist nicht schiefgegangen —
+       es ist unwiderruflich. Dafür ist Ink da, wie bei „Fortfahren" im Gate.
+   ========================================================================== */
+
+:root {
+  --radius: 0px;
+  --line: #dfe3e5;
+  --line-soft: #eef1f2;
+  --bg: #f4f6f7;
+  --bg-soft: #fafbfb;
+  --ink: #0d1214;
+  --ink-2: #3c464a;
+  --ink-3: #8d979b;
+  --ok-edge: #1d6b3a;
+  --ok-bg: #f4faf6;
+  --ok-fg: #14512c;
+  --warn-edge: #b57a12;
+  --warn-bg: #fdf9f1;
+  --warn-fg: #6b4a00;
+  --err-edge: #a12a2a;
+  --err-bg: #fdf5f5;
+  --err-fg: #7a1919;
+  --danger-ink: #0d1214;
+}
+
+body {
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- Kopfband ---------- */
+.header {
+  background: var(--teal-dark);
+  border-bottom: 0;
+  padding: 0 24px;
+  gap: 16px;
+}
+
+.brand { display: flex; align-items: center; gap: 10px; padding: 14px 0; }
+
+.brand h1 {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  text-transform: uppercase;
+  color: #fff;
+}
+
+.subtitle { margin: 0; color: #b8ebee; font-size: 11.5px; }
+
+/* Das Schild, auf das man sieht, bevor man „Veröffentlichen" drückt. */
+.stage-note {
+  border-radius: 0;
+  padding: 5px 12px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.stage-note.is-dry {
+  color: var(--teal-dark);
+  background: #fff;
+}
+
+.stage-note.is-live {
+  color: #fff;
+  background: var(--danger-ink);
+}
+
+/* ---------- Layout: 1 · Fotos | 2 · Erkennung | 3 · Prüfen ---------- */
+.layout {
+  grid-template-columns: 320px 300px minmax(420px, 1fr);
+  gap: 1px;
+  background: var(--line);
+  padding: 0;
+}
+
+@media (max-width: 1080px) {
+  .layout { grid-template-columns: 1fr; }
+}
+
+.col {
+  border: 0;
+  border-radius: 0;
+  padding: 18px 20px;
+  align-self: stretch;
+}
+
+.col:nth-child(3) { padding: 18px 24px; }
+
+.col h2 {
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+}
+
+/* ---------- Fotos als Liste, nicht als Kachelfeld ----------
+   Eine Zeile pro Foto: Rolle, Zuschnitt-Ergebnis und Warnung stehen nebeneinander
+   lesbar statt in einer 104-px-Spalte übereinander gestapelt. */
+.photo-list {
+  flex-direction: column;
+  gap: 1px;
+  background: var(--line-soft);
+  margin-top: 12px;
+}
+
+.photo {
+  display: grid;
+  grid-template-columns: 48px 1fr;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  border: 0;
+  border-radius: 0;
+  background: #fff;
+  padding: 8px;
+}
+
+.photo.is-cover {
+  box-shadow: none;
+  border: 0;
+}
+
+.photo img {
+  width: 48px;
+  height: 60px;
+  aspect-ratio: auto;
+  grid-row: 1 / span 5;
+}
+
+.photo.is-cover img { outline: 2px solid var(--teal); outline-offset: -2px; }
+
+.photo-tag {
+  position: static;
+  grid-column: 2;
+  justify-self: start;
+  background: transparent;
+  color: var(--teal-dark);
+  border-radius: 0;
+  padding: 0;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.photo-role {
+  grid-column: 2;
+  padding: 0;
+  min-height: 0;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.photo-done,
+.photo-recrop,
+.photo-seen,
+.photo-warn {
+  grid-column: 2;
+  background: transparent;
+  padding: 0;
+  font-size: 10.5px;
+  line-height: 1.4;
+}
+
+.photo-done { color: var(--ok-edge); }
+.photo-warn.warn { color: var(--warn-fg); }
+.photo-warn.note { color: var(--ink-3); }
+
+.photo-drop { border-radius: 0; }
+
+.dropzone {
+  border: 1px dashed #cfd6d9;
+  border-radius: 0;
+  background: #fff;
+  padding: 14px;
+}
+
+.dropzone:hover,
+.dropzone:focus-visible,
+.dropzone.is-over { background: var(--teal-soft); }
+
+.drop-title { font-size: 12px; font-weight: 700; }
+.drop-hint { font-size: 11px; }
+
+/* ---------- Aktionen ---------- */
+.btn-primary,
+.btn-secondary { border-radius: 0; }
+
+.btn-primary {
+  font-size: 12.5px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  padding: 11px 14px;
+}
+
+.btn-primary:disabled { background: var(--line-soft); color: var(--ink-3); }
+
+/* Scharf: Ink. Die Farbe wechselt mit dem Schild im Kopf, nicht mit dem Ergebnis.
+   Erfordert eine Zeile in studio.js — siehe README, Schritt 3. */
+#publish.is-live { background: var(--danger-ink); }
+#publish.is-live:hover:not(:disabled) { background: #000; }
+
+#gateProceed { background: var(--danger-ink); }
+#gateProceed:hover:not(:disabled) { background: #000; }
+
+/* ---------- Felder als Tabelle ---------- */
+.field { border-bottom-color: var(--line-soft); padding: 9px 0; }
+
+.field-label { font-size: 11.5px; }
+
+.field-value {
+  background: transparent;
+  border-radius: 0;
+  font-weight: 700;
+  padding: 4px 0;
+}
+
+.field-value:focus { border-color: var(--teal-dark); background: #fff; padding: 4px 6px; }
+
+.field-state {
+  border-radius: 0;
+  border: 1px solid var(--line);
+  background: transparent;
+  padding: 1px 6px;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.field-state.ok { border-color: #a9d5b8; color: var(--ok-fg); background: transparent; }
+.field-state.needs_confirmation { border-color: #e3c98c; color: var(--warn-fg); background: transparent; }
+.field-state.missing { border-color: #eccfcf; color: var(--err-fg); background: transparent; }
+
+/* Ein Feld, das noch etwas von dir will, trägt die Kante — nicht nur ein Wort am Rand. */
+.field:has(.field-state.needs_confirmation) {
+  border-left: 3px solid var(--warn-edge);
+  background: var(--warn-bg);
+  padding: 10px 12px;
+}
+
+.field:has(.field-state.missing) {
+  border-left: 3px solid var(--err-edge);
+  background: var(--err-bg);
+  padding: 10px 12px;
+}
+
+.field-confirm,
+.price-hint,
+.field-candidates { border-radius: 0; }
+
+.field-confirm {
+  background: var(--danger-ink);
+  border-color: var(--danger-ink);
+  color: #fff;
+}
+
+.field-confirm:hover { background: #000; border-color: #000; color: #fff; }
+
+/* ---------- Titel, Text, offene Punkte ---------- */
+.title-box {
+  background: transparent;
+  border-radius: 0;
+  border-bottom: 1px solid var(--line-soft);
+  padding: 14px 0 12px;
+}
+
+.title-label { letter-spacing: 0.1em; font-size: 10px; }
+
+.title-out {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.desc-out { border-radius: 0; }
+.desc-out:focus { border-color: var(--teal-dark); }
+
+.warn-box {
+  border-radius: 0;
+  border-left: 3px solid var(--warn-edge);
+  background: var(--warn-bg);
+  color: var(--warn-fg);
+  padding: 10px 12px;
+}
+
+.notes {
+  border-radius: 0;
+  border-left: 3px solid var(--line);
+  background: var(--bg-soft);
+  padding: 10px 12px;
+}
+
+/* ---------- Status ---------- */
+.status.ok { color: var(--ok-edge); font-weight: 700; }
+.status.error { color: var(--err-fg); font-weight: 700; }
+
+/* ---------- Log ---------- */
+.log-panel { border-top-color: var(--line); box-shadow: none; }
+
+.log summary {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.log-count { border-radius: 0; background: var(--line-soft); }
+#log-output { border-radius: 0; }

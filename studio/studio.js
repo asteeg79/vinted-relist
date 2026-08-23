@@ -483,6 +483,7 @@ function render() {
   const mode = publishModeNote({ settings: state.settings || {} });
   $('stageNote').textContent = mode.text;
   $('stageNote').className = 'stage-note is-' + mode.kind;
+  $('publish').classList.toggle('is-live', mode.kind === 'live');
 
   $('volatileHint').hidden = !state.photos.length;
   $('analyse').disabled = state.busy || !state.photos.length;
