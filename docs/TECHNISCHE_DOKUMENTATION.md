@@ -245,6 +245,95 @@ einen Listeneintrag passte, stand als `ok` da und ging ungefragt raus — genau 
 §7.2 verbietet. Jetzt gilt das kleinere von beidem: ein Treffer in der Liste macht eine
 Schätzung nicht sicherer.
 
+**Nachtrag 2026-08-23 — `language_book`: gemessen, weil nicht erfragbar.**
+
+Nach der ISBN lehnte der Create das Buch erneut ab:
+`400 language_book: Wähle eine Sprache, um fortzufahren` — derselbe Fehler, der den
+Relist-Pfad am 2026-08-12 getroffen hat.
+
+**Vinted nennt die IDs nirgends.** Geprüft:
+
+| Quelle | Antwort |
+|---|---|
+| `POST /api/v2/item_upload/attributes` für Kategorie 5425 | `attributes: []` — dieselbe leere Antwort bekommt die SPA |
+| Upload-Formular für Comics | zeigt Kategorie, ISBN, Zustand, Preis, Versand — **kein Sprachfeld** |
+| `item_attributes/…`, `attribute_values?code=…`, `item_upload/languages` | 404 |
+| `GET /api/v2/items/{id}` (öffentlich) | führt gar keine Attribute |
+
+Die SPA schickt die Sprache also unsichtbar mit. Bleibt eine Quelle: **ein Buch von Hand
+einstellen und nachlesen.** Genau so entstand der Eintrag in `lib/book.js` — Comic 9749905948,
+Kategorie 5425, gespeichert als
+`item_attributes: [{code:'language_book', ids:[6437]}, {code:'condition', ids:[2]}]`.
+Also `de → 6437`.
+
+Zwei Quellen für die Sprache, in dieser Reihenfolge: was das Modell auf dem Umschlag gelesen
+hat (es hat das Buch gesehen), sonst die Sprache der Texte aus den Einstellungen — dieselbe
+Annahme, die Vinteds Formular trifft, wenn es gar nicht erst fragt.
+
+**Was nicht gemessen ist, wird nicht geraten** (ADR-0005). Für eine Sprache ohne Eintrag hält
+`draft.js` den Draft an, bevor das erste Foto hochgeht, und nennt das Kürzel. Der Weg zu
+einem weiteren Eintrag ist derselbe wie zu diesem: ein Buch dieser Sprache von Hand
+einstellen, `GET /api/v2/item_upload/items/{id}` lesen, ID eintragen. Eine falsche Sprach-ID
+fällt niemandem auf, bis ein Käufer ein englisches Buch auspackt.
+
+**Nachtrag 2026-08-23 — ein Buch ohne ISBN nimmt Vinted nicht.**
+
+`400 {"field":"isbn","value":"Bitte gib eine ISBN an, um weiterzugehen"}` — vom Create,
+also nachdem alle Fotos oben waren.
+
+**Welche Kategorien sie verlangen, sagt Vinted nirgends.** Der Katalogknoten trägt kein
+Kennzeichen (`{id, title, restricted_to_status_id, badge, photo, path, catalogs}` — bei
+„Belletristik" identisch zu „Einfarbige T-Shirts"), `offline_verification/criteria`
+antwortet für Bücher wie für alles andere `["brand","price"]`, `item_upload/attributes` ist
+leer, und die naheliegenden Konfigurations-Endpunkte gibt es nicht (alle 404). Die Regel
+gilt deshalb für die ganze Warengruppe `media`. Ein Buch von vor 1970 hat keine ISBN —
+meldet das jemand, wird die Regel enger gefasst; bis dahin ist ein Blocker vor dem Upload
+billiger als ein Fehlschlag danach.
+
+Drei Quellen, in dieser Reihenfolge: was der Nutzer tippt, was **Vinteds eigene
+Fotoerkennung** in `suggestions/attributes` zurückgibt, und was das Modell gelesen hat. Die
+mittlere lag schon die ganze Zeit vor und wurde an der Naht fallen gelassen — dieselbe
+Sorte Verlust wie einst `high_resolution`. Als Rettung taugt sie allerdings nicht: ein Buch
+ohne ISBN blockt in Schritt 1, lange bevor diese Antwort da ist. Der Weg für den Nutzer ist
+der umgekehrte, und der bessere: die Nummer steht auf dem Buch in seiner Hand.
+
+Der Prompt sagt dem Modell jetzt, **wo** sie steht (Rückseite über dem Strichcode, im
+Impressum; dreizehn Ziffern, meist mit 978) — und dass sie nicht geraten wird: eine
+erfundene ISBN benennt ein fremdes Buch.
+
+**Nachtrag 2026-08-23 — der Artikel bleibt in der Mitte, auch wenn er dafür nicht ins Bild passt.**
+
+Zwei Beobachtungen an einem eingestellten Inserat: im Titelbild lief der rechte Ärmel in
+die Bildkante, und über dem Pullover stand ein Feld Fußboden.
+
+**Der Ärmel.** `chooseFrame` kann die Box nicht anschneiden — das ist als Invariante
+festgeschrieben und getestet. Fehlt der Ärmel trotzdem, war er nicht in der Box; das Modell
+hat sie zu eng gezeichnet. Zwei Antworten: der Prompt sagt jetzt, WIE zu messen ist
+(„ringsum ein Fingerbreit Hintergrund", mit den Teilen benannt, die zuerst herausfallen —
+Ärmelspitzen, Bündchen, Saum, Kapuze), und eine mit dem Auge gezeichnete Box bekommt einen
+eigenen Zuschlag (`modelMarginPct`, 6 % **der Box**, nicht des Bildes: der Fehler des
+Modells wächst mit dem Gegenstand, nicht mit dem Foto).
+
+**Der Fußboden.** Gemessen an einem 3024×4032-Foto mit flach liegendem Pullover:
+
+| Lage des Artikels | Rand über der Box | darunter |
+|---|---|---|
+| Bildmitte | 317 px | 318 px |
+| unteres Drittel | 1355 px | 41 px |
+
+In der Mitte tadellos, am Rand kippt es. Ursache war die Klemmung an der Bildkante: passte
+der zentrierte Rahmen nicht mehr hinein, wurde er verschoben. Das rettet den Bildinhalt und
+opfert die Komposition — ein 4:5-Rahmen um einen breit liegenden Artikel ist nun einmal
+höher, als das Foto hergibt.
+
+Jetzt wird stattdessen **gefüllt**, in der Farbe des Hintergrunds, den das Foto ohnehin
+zeigt. Das kostete keine Zeile in `canvas.js`: `offsetX/offsetY` sagen dort seit jeher, wo
+der Originalpixel 0 auf der Leinwand liegt, und für einen Rahmen, der über das Bild
+hinausragt, ist das schlicht negativ — die Leinwand schneidet den Überstand selbst ab. Ein
+`pad` ist damit kein Sonderfall mehr, sondern der allgemeine Fall, von dem `crop` die
+Abkürzung ist. Gemessen fällt in den geprüften Lagen 8–20 % Füllfläche an; wo es zentriert
+hineinpasst, wird weiterhin geschnitten.
+
 **Nachtrag 2026-08-23 — eine ausdrückliche Wahl überstimmt die Gegenprobe.**
 
 Derselbe Kinderpullover, einen Schritt weiter: die Navigation führte auf 1672 („Kinder >
@@ -492,6 +581,23 @@ folgt aus seiner Antwort, nicht umgekehrt.
 Einwand ist, sondern „der Artikel füllt das Bild ohnehin". Die Garantie aus §5.2 bleibt
 unberührt: die Box läuft durch dasselbe `chooseFrame` wie vorher, und ein Crop-Rahmen, der
 ins Objekt schneiden würde, wird weiterhin zu einem Pad.
+
+**Nachtrag 2026-08-23 — die Box gehört auf jedes Foto, nicht nur auf gestörte (v0.109.0).**
+
+Bis 0.108 verlangte der Prompt die `article_box` nur, wenn etwas Störendes im Bild lag;
+sonst sollte sie `null` sein. Der zweite Durchgang lief damit nur für Störungsfotos, und
+bei jedem sauberen Foto — ein Artikel frei auf dem Boden — entschied allein die
+Hintergrund-Heuristik über den Zuschnitt. Auf strukturiertem Boden (Holzmaserung, dazu ein
+grauer Artikel in ähnlicher Helligkeit) schält die Heuristik oben/unten/links/rechts
+ungleich viel weg: die Objektbox wird asymmetrisch, der 4:5-Rahmen sitzt nicht mittig auf
+dem Artikel. Gemeldet als „Bilder nicht mittig, nicht gut zugeschnitten" (Version 0.108).
+
+Seither gilt: **das Modell umreißt den Artikel auf JEDEM Foto**, und der Rahmen wird mittig
+auf diese Box gesetzt. `article_box` ist nur noch dann `null`, wenn der Artikel das Bild
+schon randlos an allen vier Seiten ausfüllt. Die Hintergrund-Heuristik bleibt reiner
+Rückfall — für Fotos, die nicht in `photo_order` stehen, oder wenn `modelBoxVerdict` die
+Box verwirft. Kein zusätzlicher KI-Aufruf: dieselbe `analyse`-Antwort, nur immer mit Box;
+der zweite Zeichen-Durchgang lief für Störungsfotos ohnehin schon.
 
 **Nachtrag 2026-08-20 — Größen und Zustände, korrigiert.**
 

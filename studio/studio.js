@@ -14,6 +14,7 @@ import { getSettings, SETTINGS_KEY } from '../lib/settings.js';
 import { readCachedKey } from '../lib/secret.js';
 import { analyse } from '../lib/ai.js';
 import { draftView, conflictedFields, FIELD_NEEDS_CONFIRMATION } from '../lib/draft-view.js';
+import { modelBoxVerdict } from '../lib/crop.js';
 import { loadPriceMemory, savePrice } from '../lib/price-memory.js';
 import { publishModeNote, publishedNote, resetGateFor } from '../lib/gates.js';
 import { HARD_MAX, SOFT_MAX } from '../lib/title.js';
@@ -118,6 +119,7 @@ const taxonomy = createTaxonomy({
 // ---------- Intake ----------
 
 $('maxPhotos').textContent = String(MAX_PHOTOS);
+$('version').textContent = 'v' + chrome.runtime.getManifest().version;
 
 $('dropzone').addEventListener('click', () => $('filePicker').click());
 $('dropzone').addEventListener('keydown', e => {
@@ -377,15 +379,21 @@ async function applySuggestedCrops() {
   const { prepare } = await import('./canvas.js');
   for (const photo of pending) {
     try {
-      const redrawn = await prepare(photo.file, { modelBox: photo.articleBox, previousFrame: photo.modelFrame });
-      if (redrawn.boxSource !== 'model') {
+      // ERST FRAGEN, DANN ZEICHNEN. Das Urteil ist reine Arithmetik über Zahlen, die hier
+      // schon liegen; `prepare` dagegen dekodiert das volle Foto und kodiert ein JPEG. Die
+      // beiden häufigsten Absagen — „füllt ohnehin das Bild" und „müsste zu stark
+      // hochgerechnet werden" — kosteten damit je einen kompletten Durchlauf für nichts,
+      // und seit der Prompt für JEDES Foto eine Artikelbox verlangt, für jedes Foto.
+      const verdict = modelBoxVerdict(photo.articleBox, photo.modelFrame, photo.modelFrame.w, photo.modelFrame.h);
+      if (!verdict.box) {
         // 'full_frame' is the normal "nothing to trim here" and stays quiet as such; the
         // other reasons mean the model proposed something unusable, and a model that keeps
         // doing that is a prompt problem which silence would hide.
-        log('studio_recrop_skipped', { name: photo.name, reason: redrawn.boxReason, box: photo.articleBox });
-        URL.revokeObjectURL(redrawn.url);
+        log('studio_recrop_skipped', { name: photo.name, reason: verdict.reason, box: photo.articleBox });
         continue;
       }
+
+      const redrawn = await prepare(photo.file, { modelBox: photo.articleBox, previousFrame: photo.modelFrame });
       // NUR die Inseratskopie wird frei — die Modellkopie liefert der zweite Durchgang gar
       // nicht mehr, weil sie Byte für Byte dieselbe wäre. `Object.assign` lässt sie stehen.
       URL.revokeObjectURL(photo.url);
@@ -510,7 +518,12 @@ function renderDerived(view = currentView()) {
 
   if (document.activeElement !== $('descOut')) $('descOut').value = view.description;
 
-  $('blockerBox').hidden = view.canPublish;
+  // AN DER LISTE, NICHT AM KNOPF. Hier stand `hidden = view.canPublish` — solange
+  // „veröffentlichbar" und „nichts offen" dasselbe waren, ging das gut. Seit ein fertig
+  // eingestellter Draft ein eigener Grund für `canPublish: false` ist, laufen die beiden
+  // auseinander: nach dem Einstellen stand „Noch offen" als leerer Kasten da. Die
+  // Überschrift beantwortet „was fehlt noch" — ohne Eintrag gibt es nichts zu beantworten.
+  $('blockerBox').hidden = view.blockers.length === 0;
   fill($('blockerList'), view.blockers, blocker => {
     const li = document.createElement('li');
     li.textContent = blocker;
@@ -691,24 +704,21 @@ function renderFields(view) {
 }
 
 /**
- * Felder, deren getipptes Wort eine neue Frage an Vinted ist — und wo die Antwort landet.
- *
- * Beides sind Felder mit `NEEDS_ID`: ein Wort ohne Vinted-ID blockt, also muss das Tippen
- * eine ID beschaffen können. Die Farbe steht nicht dabei, weil sie ihre ganze Liste als
- * Auswahl anbietet und Tippen dort nichts hinzufügt.
- */
-const RELOOKUP_ON_TYPE = { category: 'catalog', size: 'size' };
-
-/**
  * Ein getipptes Wort nachschlagen, und den Fund festnageln.
  *
  * Der zweite Durchgang ist kein Umweg: er macht aus dem Treffer eine Wahl (`picks`) und
  * wirft den getippten Text weg, damit im Feld Vinteds eigene Schreibweise steht und das
  * nächste Nachschlagen nicht wieder vom Wort des Modells ausgeht.
+ *
+ * Welche Felder das betrifft, wo ihre Auflösung liegt und wie sie heißen, steht am Feld —
+ * `draft-view.js` führt diese Tabellen ohnehin. Hier standen sie ein zweites Mal, und die
+ * Beschriftung war dabei falsch: bei Medien heißt das Feld „Titel", die Statuszeile sagte
+ * „Schlage die Kategorie nach…".
  */
-async function retypeField(key) {
-  const resolvedKey = RELOOKUP_ON_TYPE[key];
-  const label = { category: 'Kategorie', size: 'Größe' }[key];
+async function retypeField(field) {
+  const key = field.key;
+  const resolvedKey = field.resolvedAs;
+  const label = field.label;
 
   delete state.picks[key]; // das getippte Wort ersetzt eine frühere Wahl
   setAnalyse(`Schlage die ${label} nach…`, 'working');
@@ -760,7 +770,7 @@ function valueInput(field) {
     // the brand list and the price range all hang off it. Dasselbe gilt für die Größe —
     // ein getipptes „152" war bis 0.98.0 dekorativ, und der Hinweis „anderen Begriff
     // eintippen" schickte den Nutzer damit im Kreis.
-    if (RELOOKUP_ON_TYPE[field.key]) await retypeField(field.key);
+    if (field.relookupOnType) await retypeField(field);
     render();
   });
   return input;
@@ -850,12 +860,10 @@ function candidateSelect(field) {
   select.setAttribute('aria-label', field.label + ' auswählen');
 
   // Ein Schritt (`path`, keine id) ist kein Ziel, sondern die nächste Eingabe — siehe
-  // `browseCatalogs`. Das Auswahlfeld sagt deshalb, was es gerade anbietet.
-  const stepping = field.candidates.some(c => c.id == null && c.path);
-
+  // `browseCatalogs`. Welche Sorte Liste das ist, entscheidet `draft-view.js`.
   const empty = document.createElement('option');
   empty.value = '';
-  empty.textContent = stepping
+  empty.textContent = field.candidateKind === 'steps'
     ? `${field.candidates.length} Bereiche — weiter eingrenzen`
     : `${field.candidates.length} Treffer — auswählen`;
   select.appendChild(empty);
@@ -876,6 +884,13 @@ function candidateSelect(field) {
     if (Number.isFinite(id) && field.candidates.some(c => String(c.id) === select.value)) {
       // The pick still passes validatePick inside resolve.js — this only proposes it.
       state.picks[field.key] = id;
+      // UND DAS GETIPPTE WORT IST DAMIT ERLEDIGT. Ohne diese Zeile blieb es stehen und
+      // gewann im Titel: `values` liest `overrides` VOR der Auflösung. Live zu sehen an
+      // einem eingestellten Inserat — Titel „Under Armour Kinder Jungs Hose 146 Schwarz",
+      // während es unter „Herren > Kleidung > Hosen > Jogging-Hosen" mit Größe „M" lag.
+      // Der Titel behauptete etwas anderes als die Angaben darunter, und beides stand
+      // öffentlich. Wer aus der Liste wählt, hat seinen Suchbegriff ersetzt, nicht ergänzt.
+      delete state.overrides[field.key];
       setAnalyse(`${field.label} wird nachgeschlagen…`, 'working');
       const failed = await runLookup();
       const chosen = field.candidates.find(c => c.id === id)?.label;
@@ -883,7 +898,7 @@ function candidateSelect(field) {
     } else {
       // Der gewählte Pfad wird zum getippten Wort — dieselbe Filterung, eine Ebene tiefer.
       state.overrides[field.key] = select.value;
-      if (RELOOKUP_ON_TYPE[field.key]) await retypeField(field.key);
+      if (field.relookupOnType) await retypeField(field);
     }
     render();
   });
@@ -1005,6 +1020,9 @@ $('publish').addEventListener('click', async () => {
       log('studio_published', { newId: reply.newId });
     }
   } catch (e) {
+    // Auch was NEBEN der Pipeline schiefgeht — eine Nachricht, die den Worker nicht
+    // erreicht — gehört ins Log. Sonst endet der Lauf dort wortlos.
+    log('studio_publish_failed', { error: e.message });
     setPublish('Fehler: ' + e.message, 'error');
   } finally {
     state.busy = false;

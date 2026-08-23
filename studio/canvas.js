@@ -67,19 +67,31 @@ export async function prepare(file, options = {}) {
   // Vinted's CDN images are already normalised.
   const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
   try {
+    // ERST DAS URTEIL, DANN DIE ARBEIT. `modelBoxVerdict` ist reine Arithmetik; die
+    // Abschälung darunter kostet eine Verkleinerung, ein `getImageData` und einen
+    // Zeilen-/Spaltendurchlauf. Gewinnt die Modellbox, wird `heuristic` ohnehin verworfen
+    // — und seit der Prompt für JEDES Foto eine Artikelbox verlangt, ist das der Normalfall
+    // statt der Ausnahme.
+    const verdict = options.modelBox
+      ? modelBoxVerdict(options.modelBox, options.previousFrame, bitmap.width, bitmap.height)
+      : { box: null, reason: 'not_offered' };
+
+    // `pixels` braucht auch die Füllfarbe, und die wird seit der Zentrierung häufiger
+    // gebraucht als früher — deshalb hängt nur die Abschälung am Urteil, nicht das Bild.
     const small = draw(bitmap, ANALYSIS_EDGE);
     const pixels = small.ctx.getImageData(0, 0, small.canvas.width, small.canvas.height).data;
-    const gray = toGrayscale(pixels, small.canvas.width, small.canvas.height);
 
-    const found = objectBox(gray, small.canvas.width, small.canvas.height);
-    const heuristic = scaleBox(found, bitmap.width / small.canvas.width, bitmap.width, bitmap.height);
+    let found = null;
+    let heuristic = null;
+    if (!verdict.box) {
+      const gray = toGrayscale(pixels, small.canvas.width, small.canvas.height);
+      found = objectBox(gray, small.canvas.width, small.canvas.height);
+      heuristic = scaleBox(found, bitmap.width / small.canvas.width, bitmap.width, bitmap.height);
+    }
 
     // The model's box wins when there is a usable one — it is the only party here that
     // knows a shoe from a sleeve. `modelBoxVerdict` refuses anything implausible,
     // and then nothing changes.
-    const verdict = options.modelBox
-      ? modelBoxVerdict(options.modelBox, options.previousFrame, bitmap.width, bitmap.height)
-      : { box: null, reason: 'not_offered' };
     const box = verdict.box || heuristic;
 
     const frame = chooseFrame(box, bitmap.width, bitmap.height);
@@ -105,7 +117,9 @@ export async function prepare(file, options = {}) {
         frame,
         boxSource: verdict.box ? 'model' : 'heuristic',
         boxReason: verdict.reason,
-        stats: { ...found.stats, fillPct: Math.round((box.w * box.h * 100) / (bitmap.width * bitmap.height)) }
+        // `found` gibt es nur, wenn die Abschälung überhaupt lief — also wenn die Modellbox
+        // verworfen wurde. Sonst bleibt der Füllanteil als das, was hier zu sagen ist.
+        stats: { ...(found?.stats ?? {}), fillPct: Math.round((box.w * box.h * 100) / (bitmap.width * bitmap.height)) }
       };
     }
 

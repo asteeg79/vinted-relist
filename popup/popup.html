@@ -17,6 +17,10 @@
         <div class="brand-text">
           <h1>Vinted Relist</h1>
           <p class="subtitle">Artikel an die Spitze bringen</p>
+          <!-- NICHT im Untertitel: der Klar-Layer blendet `.subtitle` im Popup aus, und die
+               Versionsnummer wäre damit genau dort unsichtbar, wo man nach einem „bitte neu
+               laden" nachsieht. Im Studio bleibt der Untertitel sichtbar. -->
+          <p class="version-line"><span id="version">…</span></p>
         </div>
         <button id="openSettings" class="icon-btn" title="Einstellungen" aria-label="Einstellungen">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">

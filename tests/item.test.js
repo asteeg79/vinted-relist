@@ -462,10 +462,17 @@ test('unfillableAttributeCodes: an empty list is nothing to stop for', () => {
 
 test('unfillableAttributeCodes: names what we cannot answer', () => {
   const codes = unfillableAttributeCodes([
-    { code: 'language_book', value_ids: [] },
+    { code: 'video_game_rating', value_ids: [] },
     { code: 'video_game_platform', value_ids: [] }
   ]);
-  assert.deepEqual(codes, ['language_book', 'video_game_platform']);
+  assert.deepEqual(codes, ['video_game_rating', 'video_game_platform']);
+});
+
+test('unfillableAttributeCodes: die Buchsprache zählt nicht mehr dazu', () => {
+  // Seit `lib/book.js` eine gemessene ID dafür hat, ist `language_book` gefüllt und nicht
+  // mehr unfüllbar. Ohne diesen Eintrag hielte die Prüfung genau den einen Code auf, für
+  // den es inzwischen eine Antwort gibt.
+  assert.deepEqual(unfillableAttributeCodes([{ code: 'language_book', value_ids: [] }]), []);
 });
 
 test('unfillableAttributeCodes: skips what the payload already carries in its own column', () => {
@@ -479,6 +486,6 @@ test('unfillableAttributeCodes: skips what the payload already carries in its ow
 
 test('unfillableAttributeCodes: no code is nothing to report, and each one only once', () => {
   assert.deepEqual(unfillableAttributeCodes([
-    {}, { code: '' }, { code: '  ' }, null, { code: 'language_book' }, { code: 'language_book' }
-  ]), ['language_book']);
+    {}, { code: '' }, { code: '  ' }, null, { code: 'video_game_platform' }, { code: 'video_game_platform' }
+  ]), ['video_game_platform']);
 });

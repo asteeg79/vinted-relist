@@ -191,6 +191,39 @@ test('draftView: eine überstimmte Erkennung steht als Hinweis da, nicht als Blo
   assert.match(f.hint, /deine Wahl steht/);
 });
 
+// ---------- der Titel darf den Angaben nicht widersprechen ----------
+
+test('draftView: der Titel nennt die aufgelöste Größe, nicht das getippte Wort', () => {
+  // Live passiert am 2026-08-23: Titel „Under Armour Kinder Jungs Hose 146 Schwarz", im
+  // Inserat gespeichert „Größe M". Wer nach M filtert, liest 146. Der Titel ist die eine
+  // Stelle, an der eine falsche Größe niemandem auffällt, bis das Paket ankommt.
+  const view = draftView(readyWith(
+    { size: { id: 105, label: 'M', confidence: 1, candidates: [] } },
+    { overrides: { size: '146' } }
+  ));
+  assert.match(view.title, /\bM\b/);
+  assert.doesNotMatch(view.title, /146/);
+});
+
+test('draftView: ohne aufgelöste Größe steht im Titel, was getippt wurde', () => {
+  // Solange keine ID dahintersteht, ist das getippte Wort das Beste, was es gibt — und das
+  // Feld blockt ohnehin, bis eine ID da ist.
+  const view = draftView(readyWith({ size: { id: null, label: null, confidence: 0, candidates: [] } },
+    { overrides: { size: '146' } }));
+  assert.match(view.title, /146/);
+});
+
+test('draftView: bei der Kategorie bleibt es umgekehrt — der Alltagsname gewinnt', () => {
+  // Vinteds Ablagebezeichnung ist der schlechtere Titel („Einfarbige T-Shirts"), und die
+  // Kategorie steht als eigene Angabe im Inserat — widersprechen kann sie dem Titel nicht.
+  const view = draftView(readyWith(
+    { catalog: { id: 1806, label: 'Einfarbige T-Shirts', confidence: 1, candidates: [] } },
+    { overrides: { category: 'T-Shirt' } }
+  ));
+  assert.match(view.title, /T-Shirt /);
+  assert.doesNotMatch(view.title, /Einfarbige/);
+});
+
 // ---------- warum das Preisfeld leer ist ----------
 
 test('draftView: ein fehlender Preis sagt, woran es liegt', () => {
@@ -327,11 +360,92 @@ test('draftView: wo keine Größe verlangt wird, verlangt auch niemand eine ID',
   // Medien führen gar kein Größenfeld, Accessoires eines ohne Pflicht. Die Sperre greift
   // nur, wo das Feld auch gebraucht wird.
   const view = draftView(ready({
-    analysis: analysis({ category_group: 'media', size_label: null, size_source: 'none' }),
+    analysis: analysis({ category_group: 'media', size_label: null, size_source: 'none', isbn: '9783123456789' }),
     resolved: { catalog: { id: 2319, label: 'Belletristik', confidence: 1, candidates: [] } }
   }));
   assert.equal(view.fields.some(f => f.key === 'size'), false);
   assert.equal(view.canPublish, true);
+});
+
+test('draftView: das Feld sagt selbst, wo seine Auflösung liegt und ob Tippen nachschlägt', () => {
+  // Das Studio hatte diese beiden Tabellen von Hand nachgebaut — samt einer dritten für die
+  // Beschriftung, die bei Medien „Kategorie" statt „Titel" sagte.
+  const view = draftView(ready());
+  const by = key => view.fields.find(f => f.key === key);
+  assert.equal(by('category').resolvedAs, 'catalog');
+  assert.equal(by('category').relookupOnType, true);
+  assert.equal(by('size').relookupOnType, true);
+  assert.equal(by('color').relookupOnType, false, 'die Farbe bietet ihre ganze Liste an');
+  assert.equal(by('price').resolvedAs, null);
+});
+
+test('draftView: Kandidaten sind Ziele oder Zwischenschritte, und das Feld sagt welches', () => {
+  const treffer = draftView(readyWith({
+    catalog: { id: null, label: 'X', confidence: 0, candidates: [{ id: 1, label: 'a' }, { id: 2, label: 'b' }] }
+  }));
+  assert.equal(field(treffer, 'category').candidateKind, 'hits');
+
+  const schritte = draftView(readyWith({
+    catalog: { id: null, label: 'X', confidence: 0, candidates: [{ path: 'Kinder > Jungs', label: 'Kinder > Jungs …' }] }
+  }));
+  assert.equal(field(schritte, 'category').candidateKind, 'steps');
+});
+
+// ---------- Bücher ohne ISBN nimmt Vinted nicht ----------
+
+test('draftView: eine unbelegte Buchsprache blockt hier, nicht erst in der Pipeline', () => {
+  // Sie stand einmal in `runPublish` — hinter dem Schreib-Schloss, nach dem Klick und den
+  // Gates. Die Liste „Noch offen" konnte damit leer sein, während der Draft
+  // unveröffentlichbar war. Die ISBN macht es über `LAYOUT.media.required` richtig.
+  const view = draftView(ready({
+    analysis: analysis({ category_group: 'media', size_label: null, size_source: 'none', isbn: '978', book_language: 'en' }),
+    resolved: { catalog: { id: 2319, label: 'Belletristik', confidence: 1, candidates: [] } }
+  }));
+  assert.equal(view.canPublish, false);
+  assert.ok(view.blockers.some(b => /Sprache „en"/.test(b)), view.blockers.join(' | '));
+  assert.equal(view.bookLanguage.id, null);
+});
+
+test('draftView: eine belegte Sprache blockt nicht und reist zur Payload mit', () => {
+  const view = draftView(ready({
+    analysis: analysis({ category_group: 'media', size_label: null, size_source: 'none', isbn: '978', book_language: 'de' }),
+    resolved: { catalog: { id: 2319, label: 'Belletristik', confidence: 1, candidates: [] } }
+  }));
+  assert.equal(view.canPublish, true);
+  assert.deepEqual(view.bookLanguage, { code: 'de', id: 6437, source: 'ai' });
+});
+
+test('draftView: außerhalb der Medien gibt es keine Buchsprache', () => {
+  assert.deepEqual(draftView(ready()).bookLanguage, { code: null, id: null, source: null });
+});
+
+test('draftView: ein Buch ohne ISBN blockt, bevor ein Foto hochgeht', () => {
+  // Gemessen am 2026-08-23: `400 isbn: Bitte gib eine ISBN an, um weiterzugehen` — vom
+  // Create, also nachdem alle Fotos oben waren.
+  const view = draftView(ready({
+    analysis: analysis({ category_group: 'media', size_label: null, size_source: 'none', isbn: null }),
+    resolved: { catalog: { id: 2319, label: 'Belletristik', confidence: 1, candidates: [] } }
+  }));
+  assert.equal(state(view, 'isbn'), FIELD_MISSING);
+  assert.equal(view.canPublish, false);
+  assert.ok(view.blockers.some(b => /ISBN/.test(b)), view.blockers.join(' | '));
+});
+
+test('draftView: außerhalb der Medien gibt es gar kein ISBN-Feld', () => {
+  // Ein T-Shirt hat keine, und ein Feld, das nie etwas enthalten kann, ist nur im Weg.
+  assert.equal(draftView(ready()).fields.some(f => f.key === 'isbn'), false);
+});
+
+test('draftView: die ISBN kommt aus zwei Quellen, in dieser Reihenfolge', () => {
+  // Vinteds eigene Lesung steht bewusst nicht dabei: sie kommt erst nach dem Upload, und
+  // ein Buch ohne ISBN blockt lange davor — siehe `draft.js`.
+  const media = over => draftView(ready({
+    analysis: analysis({ category_group: 'media', size_label: null, size_source: 'none', isbn: '111' }),
+    resolved: { catalog: { id: 2319, label: 'Belletristik', confidence: 1, candidates: [] } },
+    ...over
+  }));
+  assert.equal(field(media({}), 'isbn').value, '111', 'was das Modell gelesen hat');
+  assert.equal(field(media({ overrides: { isbn: '333' } }), 'isbn').value, '333', 'und der Nutzer schlägt es');
 });
 
 test('draftView: eine GESCHÄTZTE Größe bleibt bestätigungspflichtig, auch wenn sie passt', () => {

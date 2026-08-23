@@ -527,5 +527,8 @@ function renderDraftCreateHint() {
 }
 
 // ---------- Init ----------
+// Sichtbar, nicht nur im Log: nach „bitte neu laden" ist die Version die einzige Auskunft
+// darüber, ob das auch geschehen ist.
+$('version').textContent = 'v' + chrome.runtime.getManifest().version;
 refreshLog();
 renderHistory();

@@ -1,6 +1,6 @@
 {
   "name": "vinted-relist",
-  "version": "0.102.0",
+  "version": "0.111.0",
   "private": true,
   "type": "module",
   "scripts": {

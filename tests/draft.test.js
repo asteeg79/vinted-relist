@@ -149,9 +149,9 @@ test('a category that demands an attribute we cannot fill stops the draft', asyn
   // Sprache`, thrown by createItem, with every photo already uploaded.
   const port = makeFakeDraftPort({
     settings: { draftCreateEnabled: true },
-    categoryAttributes: () => [{ code: 'language_book', value_ids: [] }]
+    categoryAttributes: () => [{ code: 'video_game_platform', value_ids: [] }]
   });
-  await assert.rejects(() => publishDraft(request(), port), /language_book/);
+  await assert.rejects(() => publishDraft(request(), port), /video_game_platform/);
   assert.equal(port.called('uploadPhoto'), false, 'the whole point is that it costs no upload');
   assert.equal(port.called('createItem'), false);
 });
@@ -197,6 +197,72 @@ test('eine überstimmte Erkennung hält den Lauf nicht auf, steht aber im Protok
   assert.equal(result.conflict, undefined);
   const logged = port.calls.find(c => c.name === 'log' && c.args[0] === 'publish_override');
   assert.deepEqual(logged.args[1].fields[0], { key: 'catalog', ours: 196, vinted: [1811] });
+});
+
+/** Ein Buch, wie das Studio es übergibt. */
+const bookDraft = (over = {}) => ({
+  ...READY_DRAFT,
+  analysis: { ...READY_DRAFT.analysis, category_group: 'media', size_label: null, size_source: 'none', isbn: '9783123456789' },
+  resolved: { catalog: { id: 2319, label: 'Belletristik', confidence: 1, candidates: [] } },
+  ...over
+});
+
+test('ein Buch ohne ISBN kostet keinen einzigen Upload', async () => {
+  // Gemessen am 2026-08-23: `400 isbn: Bitte gib eine ISBN an, um weiterzugehen` — vom
+  // Create, also nachdem alle Fotos oben waren. Die Nummer steht auf dem Buch in der Hand
+  // des Nutzers; danach zu fragen ist billiger als jeder Fehlschlag danach.
+  const port = makeFakeDraftPort({ settings: { draftCreateEnabled: true } });
+  const draft = bookDraft({ analysis: { ...bookDraft().analysis, isbn: null } });
+  await assert.rejects(() => publishDraft(request({ draft }), port), /ISBN/);
+  assert.equal(port.called('uploadPhoto'), false);
+});
+
+test('ein Buch geht mit gemessener Sprache raus, nicht mit geratener', async () => {
+  // Gemessen am 2026-08-23 an einem von Hand eingestellten Comic: Vinted speicherte
+  // `item_attributes: [{code:'language_book', ids:[6437]}]`. Ohne das Attribut lehnt der
+  // Create ab — `language_book: Wähle eine Sprache, um fortzufahren`.
+  const port = makeFakeDraftPort({ suggestCategories: () => [], suggestAttributes: () => ({ brands: [], colors: [], sizes: [], isbn: null }) });
+  const draft = bookDraft({ analysis: { ...bookDraft().analysis, book_language: 'de' } });
+  const result = await publishDraft(request({ draft }), port);
+
+  assert.deepEqual(result.payload.item.item_attributes, [{ code: 'language_book', ids: [6437] }]);
+  const logged = port.calls.find(c => c.name === 'log' && c.args[0] === 'book_language');
+  assert.deepEqual(logged.args[1], { code: 'de', id: 6437, source: 'ai' });
+});
+
+test('eine unbelegte Sprache kostet keinen Upload — und sagt, welche fehlt', async () => {
+  // Vinted nennt die IDs nirgends (siehe book.js). Was nicht gemessen ist, wird nicht
+  // geraten: eine falsche Sprach-ID steht danach öffentlich im Inserat.
+  const port = makeFakeDraftPort({ settings: { draftCreateEnabled: true } });
+  const draft = bookDraft({ analysis: { ...bookDraft().analysis, book_language: 'en' } });
+
+  await assert.rejects(() => publishDraft(request({ draft }), port), /„en"/);
+  assert.equal(port.called('uploadPhoto'), false);
+});
+
+test('außerhalb der Medien bleibt der Attributbeutel leer', async () => {
+  const port = makeFakeDraftPort();
+  const result = await publishDraft(request(), port);
+  assert.deepEqual(result.payload.item.item_attributes, []);
+  assert.equal(port.called('log') && port.calls.some(c => c.args[0] === 'book_language'), false);
+});
+
+test('die gelesene ISBN landet in der Payload', async () => {
+  const port = makeFakeDraftPort({ suggestCategories: () => [], suggestAttributes: () => ({ brands: [], colors: [], sizes: [], isbn: null }) });
+  const result = await publishDraft(request({ draft: bookDraft() }), port);
+  assert.equal(result.payload.item.isbn, '9783123456789');
+});
+
+test('Vinteds eigene ISBN verdrängt die gelesene nicht', async () => {
+  // Vinted liest die Nummer ebenfalls aus den Fotos und nennt sie in
+  // `suggestions/attributes`. Übernommen wird sie nicht: sie käme nach dem Upload, und ein
+  // Buch ohne ISBN blockt lange davor. Was im Feld steht, entscheidet.
+  const port = makeFakeDraftPort({
+    suggestCategories: () => [],
+    suggestAttributes: () => ({ brands: [], colors: [], sizes: [], isbn: '9789999999999' })
+  });
+  const result = await publishDraft(request({ draft: bookDraft() }), port);
+  assert.equal(result.payload.item.isbn, '9783123456789');
 });
 
 // ================================================================================
@@ -352,6 +418,44 @@ test('a failing suggestion endpoint does not block a reviewed draft', async () =
 // ================================================================================
 // Failure leaves nothing behind — there is no partial.
 // ================================================================================
+
+test('ein gescheiterter Create steht im Log — sonst endet der Lauf dort wortlos', async () => {
+  // Aus einem echten Log (2026-08-23): nach `package_size` kam nichts mehr. Die Auskunft
+  // („isbn: Bitte gib eine ISBN an") stand nur im Fenster, das man wegklickt — und das Log
+  // ist das, was in einen Fehlerbericht kopiert wird.
+  const port = makeFakeDraftPort({
+    settings: { draftCreateEnabled: true },
+    createItem: () => { throw new ApiError(400, '{"errors":[{"field":"isbn"}]}'); }
+  });
+  await assert.rejects(() => publishDraft(request(), port), ApiError);
+
+  const logged = port.calls.find(c => c.name === 'log' && c.args[0] === 'publish_failed');
+  assert.ok(logged, 'kein publish_failed im Log');
+  assert.equal(logged.args[1].status, 400);
+  assert.match(logged.args[1].error, /isbn/);
+});
+
+test('Vinteds Feldfehler kommen als Satz an, nicht als JSON', async () => {
+  // Auf dem Bildschirm stand `HTTP 400: {"code":99,"message":"Es gibt ein Problem",…}` —
+  // die eigentliche Auskunft musste man aus dem JSON klauben. Der Relist-Pfad übersetzt
+  // das seit jeher.
+  const body = JSON.stringify({
+    code: 99, message_code: 'validation_error',
+    errors: [{ field: 'language_book', value: 'Wähle eine Sprache, um fortzufahren' }]
+  });
+  const port = makeFakeDraftPort({
+    settings: { draftCreateEnabled: true },
+    createItem: () => { throw new ApiError(400, body); }
+  });
+
+  await assert.rejects(() => publishDraft(request(), port), e => {
+    assert.match(e.message, /language_book: Wähle eine Sprache/);
+    assert.doesNotMatch(e.message, /code":99/, 'kein JSON auf dem Bildschirm');
+    return true;
+  });
+  const logged = port.calls.find(c => c.name === 'log' && c.args[0] === 'publish_failed');
+  assert.deepEqual(logged.args[1].fields, ['language_book']);
+});
 
 test('a failed create leaves no history entry', async () => {
   const port = makeFakeDraftPort({

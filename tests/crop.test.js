@@ -166,14 +166,75 @@ test('chooseFrame: box plus margin fits a 4:5 frame → crop', () => {
   assert.ok(Math.abs(frame.w / frame.h - DEFAULTS.aspect) < 0.01, `${frame.w}×${frame.h} is not 4:5`);
 });
 
-test('chooseFrame: no 4:5 frame fits around the box → pad, original pixels kept whole', () => {
+test('chooseFrame: kein 4:5-Rahmen passt → gefüllt, und der Artikel steht mittig darin', () => {
+  // Früher wurde hier das GANZE Bild mittig auf eine 4:5-Leinwand gelegt. Jetzt sitzt der
+  // Rahmen mittig auf dem OBJEKT und wird gefüllt, wo das Foto nicht mehr reicht — was
+  // außerhalb der Objektbox liegt, ist Hintergrund und darf wegfallen.
   const w = 400, h = 200; // wide format, wide object: any 4:5 frame would cut it
   const box = objectBox(img(w, h, { x: 20, y: 40, w: 360, h: 120 }), w, h);
   const frame = chooseFrame(box, w, h);
   assert.equal(frame.mode, 'pad');
-  assert.ok(frame.w >= w && frame.h >= h, 'padding must never shrink the source');
-  assert.ok(frame.offsetX >= 0 && frame.offsetY >= 0);
   assert.ok(Math.abs(frame.w / frame.h - DEFAULTS.aspect) < 0.01);
+  assert.ok(contains(frame, box), 'das Objekt bleibt vollständig drin — das ist die Zusage');
+  assert.ok(frame.h > h, 'senkrecht reicht das Foto nicht, dort wird gefüllt');
+  // `offsetX/offsetY` sagen weiterhin, wo der Originalpixel 0 auf der Leinwand liegt.
+  assert.equal(frame.offsetX, -frame.x);
+  assert.equal(frame.offsetY, -frame.y);
+});
+
+test('chooseFrame: der Artikel steht mittig — auch wenn er dafür nicht ganz ins Bild passt', () => {
+  // Gemessen am 2026-08-23 an einem 3024×4032-Foto mit flach liegendem Pullover: in der
+  // Bildmitte 317 px über und 318 unter der Box, im unteren Drittel aber 1355 oben und 41
+  // unten. Der Rahmen wurde an die Bildkante geschoben, sobald er zentriert nicht mehr
+  // hineinpasste — der Bildinhalt gerettet, die Komposition geopfert.
+  const w = 3024, h = 4032;
+  const tief = { x: 300, y: 2600, w: 2400, h: 1200, certain: true, touchesEdge: false };
+  const frame = chooseFrame(tief, w, h);
+
+  assert.equal(frame.mode, 'pad', 'zentriert passt er nicht — also wird gefüllt');
+  assert.ok(contains(frame, tief));
+  const oben = tief.y - frame.y;
+  const unten = (frame.y + frame.h) - (tief.y + tief.h);
+  assert.ok(Math.abs(oben - unten) <= 1, `mittig: ${oben} über, ${unten} unter der Box`);
+});
+
+test('chooseFrame: an einer Kante, an der der Artikel hinausläuft, wird geklemmt statt gefüllt', () => {
+  // Aus einem echten Log (2026-08-23, IMG_6320): `peel {top: 0, left: 0}`, also klebt die
+  // Box in der oberen linken Ecke, und `touchesEdge: true` — der Artikel läuft dort schon
+  // in der Aufnahme aus dem Bild. Die Box ist dann nicht der Artikel, sondern sein
+  // sichtbarer Teil; ihr Mittelpunkt liegt außerhalb des Fotos. Auf sie zu zentrieren
+  // schob den Rahmen ins Nichts und füllte die Lücke mit Farbe — genau dort, wo der
+  // Artikel abgeschnitten war.
+  const w = 3024, h = 4032;
+  const inDerEcke = { x: 0, y: 0, w: 2616, h: 3247, certain: true, touchesEdge: true };
+  const frame = chooseFrame(inDerEcke, w, h);
+
+  assert.equal(frame.mode, 'crop', 'oben und links gibt es nichts zu ergänzen');
+  assert.equal(frame.x, 0);
+  assert.equal(frame.y, 0);
+  assert.ok(contains(frame, inDerEcke));
+});
+
+test('chooseFrame: füllt eine Achse mittig, wenn der Artikel sie ganz ausfüllt', () => {
+  // Berührt die Box beide Kanten einer Achse, gibt es dort keine Seite, die „richtiger"
+  // wäre — dann liegt der Rahmen mittig auf dem Bild.
+  const w = 3024, h = 4032;
+  const volleBreite = { x: 0, y: 1200, w: 3024, h: 1600, certain: true, touchesEdge: true };
+  const frame = chooseFrame(volleBreite, w, h);
+  assert.ok(contains(frame, volleBreite));
+  assert.ok(Math.abs(frame.x - Math.round((w - frame.w) / 2)) <= 1, 'waagerecht mittig auf dem Bild');
+});
+
+test('chooseFrame: wo es zentriert hineinpasst, wird weiterhin geschnitten', () => {
+  const w = 3024, h = 4032;
+  const mittig = { x: 300, y: 1400, w: 2400, h: 1200, certain: true, touchesEdge: false };
+  const frame = chooseFrame(mittig, w, h);
+
+  assert.equal(frame.mode, 'crop', 'ohne Not wird nichts gefüllt');
+  assert.ok(frame.x >= 0 && frame.y >= 0 && frame.x + frame.w <= w && frame.y + frame.h <= h);
+  const oben = mittig.y - frame.y;
+  const unten = (frame.y + frame.h) - (mittig.y + mittig.h);
+  assert.ok(Math.abs(oben - unten) <= 1, `mittig: ${oben}/${unten}`);
 });
 
 test('chooseFrame: uncertain detection always pads, even when a crop would fit', () => {
@@ -206,6 +267,17 @@ test('chooseFrame: a nonsensical box pads rather than producing a broken frame',
   const frame = chooseFrame({ x: 10, y: 10, w: NaN, h: 10, certain: true, touchesEdge: false }, 400, 500);
   assert.equal(frame.mode, 'pad');
   assert.ok(Number.isFinite(frame.w) && Number.isFinite(frame.h));
+});
+
+test('chooseFrame: jeder gefüllte Rahmen trägt beide Koordinatenpaare', () => {
+  // `x/y` für das Zurückrechnen einer Modellbox, `offsetX/offsetY` fürs Zeichnen. Sie sind
+  // exakte Negative; hätte nur eines davon jeder Rahmen, bräuchte es wieder eine
+  // Fallunterscheidung — und die hatte einmal ein falsches Vorzeichen.
+  const w = 400, h = 200;
+  const frame = chooseFrame(objectBox(img(w, h, { x: 20, y: 40, w: 360, h: 120 }), w, h), w, h);
+  assert.equal(frame.mode, 'pad');
+  assert.equal(frame.offsetX, -frame.x);
+  assert.equal(frame.offsetY, -frame.y);
 });
 
 test('chooseFrame: pad frame is centred', () => {
@@ -302,22 +374,27 @@ test('scaleBox: clamps to the source bounds', () => {
 /** A crop frame: the first pass took a 800×1000 window at (100, 50) out of a 1200×1600 photo. */
 const CROP_FRAME = { mode: 'crop', x: 100, y: 50, w: 800, h: 1000 };
 /** A pad frame: the whole 1200×1600 photo drawn into a 1280×1600 canvas, centred. */
-const PAD_FRAME = { mode: 'pad', w: 1280, h: 1600, offsetX: 40, offsetY: 0 };
+// Wie `chooseFrame` ihn liefert: `x/y` sagen, wo der Rahmen im Original beginnt (bei einer
+// Füllung negativ), `offsetX/offsetY` sind dasselbe mit umgekehrtem Vorzeichen und werden
+// von `compose` gelesen. Eine Attrappe mit nur einem der beiden Paare gibt es nirgends.
+const PAD_FRAME = { mode: 'pad', x: -40, y: 0, w: 1280, h: 1600, offsetX: 40, offsetY: 0 };
 
 const IMG_W = 1200;
 const IMG_H = 1600;
 /** The margin boxFromModel grants itself, in pixels, for this image. */
-const MX = Math.round(IMG_W * DEFAULTS.safetyMarginPct);
-const MY = Math.round(IMG_H * DEFAULTS.safetyMarginPct);
+// Der Zuschlag für eine mit dem Auge gezeichnete Box hängt an der BOX, nicht am Bild —
+// siehe `modelMarginPct`. Die Tests rechnen damit, nicht mit einer festen Zahl.
+const modelMargin = (len) => Math.round(len * DEFAULTS.modelMarginPct);
 
 test('boxFromModel: a crop frame maps back by adding the frame origin', () => {
   // The article occupies the top 70% of the frame — below it are the shoes.
   const box = boxFromModel({ x: 0.1, y: 0.05, w: 0.8, h: 0.7 }, CROP_FRAME, IMG_W, IMG_H);
-  // x: 100 + 0.1·800 = 180, minus the margin
-  assert.equal(box.x, 180 - MX);
-  assert.equal(box.y, 50 + 50 - MY);
-  assert.equal(box.w, (180 + 640 + MX) - (180 - MX));
-  assert.equal(box.h, (100 + 700 + MY) - (100 - MY));
+  // x: 100 + 0.1·800 = 180, minus den Zuschlag auf die Boxbreite (0.8·800 = 640).
+  const mx = modelMargin(640), my = modelMargin(700);
+  assert.equal(box.x, Math.max(0, 180 - mx));
+  assert.equal(box.y, Math.max(0, 100 - my));
+  assert.equal(box.x + box.w, Math.min(IMG_W, 180 + 640 + mx));
+  assert.equal(box.y + box.h, Math.min(IMG_H, 100 + 700 + my));
   assert.equal(box.certain, true, 'the model looked — it does not need the peel to agree');
   assert.equal(box.source, 'model');
 });
@@ -327,8 +404,8 @@ test('boxFromModel: a pad frame maps back by SUBTRACTING the offset', () => {
   // canvas's 40 px mark is the original's pixel 0 — getting this sign wrong shifts every
   // padded photo sideways.
   const box = boxFromModel({ x: 40 / 1280, y: 0.1, w: 0.5, h: 0.6 }, PAD_FRAME, IMG_W, IMG_H);
-  assert.equal(box.x, Math.max(0, 0 - MX));
-  assert.equal(box.y, 160 - MY);
+  assert.equal(box.x, Math.max(0, 0 - modelMargin(0.5 * PAD_FRAME.w)));
+  assert.equal(box.y, 160 - modelMargin(0.6 * PAD_FRAME.h));
 });
 
 test('boxFromModel: the article is never cut — the box only ever grows by the margin', () => {
@@ -394,9 +471,10 @@ test('boxFromModel: a malformed or inverted box is refused, never repaired', () 
 });
 
 test('boxFromModel: a box lying entirely in the padding yields nothing to crop to', () => {
-  // The left 3% of a padded canvas is pure fill — there is no original pixel there.
-  const narrow = { mode: 'pad', w: 2000, h: 1600, offsetX: 400, offsetY: 0 };
-  assert.equal(boxFromModel({ x: 0, y: 0.1, w: 0.15, h: 0.8 }, narrow, IMG_W, IMG_H), null);
+  // Die linken 10 % einer gepolsterten Leinwand sind reine Füllfarbe — dort liegt kein
+  // einziger Originalpixel, auch nicht nach dem Zuschlag von `modelMarginPct`.
+  const narrow = { mode: 'pad', x: -400, y: 0, w: 2000, h: 1600, offsetX: 400, offsetY: 0 };
+  assert.equal(boxFromModel({ x: 0, y: 0.1, w: 0.10, h: 0.8 }, narrow, IMG_W, IMG_H), null);
 });
 
 test('boxFromModel: what it returns is exactly what chooseFrame already eats', () => {
@@ -443,8 +521,8 @@ test('modelBoxVerdict: a usable box reports ok and carries the box', () => {
 });
 
 test('modelBoxVerdict: a box entirely in the padding says so', () => {
-  const narrow = { mode: 'pad', w: 2000, h: 1600, offsetX: 400, offsetY: 0 };
-  assert.equal(modelBoxVerdict({ x: 0, y: 0.1, w: 0.15, h: 0.8 }, narrow, IMG_W, IMG_H).reason, 'in_padding');
+  const narrow = { mode: 'pad', x: -400, y: 0, w: 2000, h: 1600, offsetX: 400, offsetY: 0 };
+  assert.equal(modelBoxVerdict({ x: 0, y: 0.1, w: 0.10, h: 0.8 }, narrow, IMG_W, IMG_H).reason, 'in_padding');
 });
 
 // ---------- the identity frame: the model now sees the whole photo ----------
@@ -455,10 +533,27 @@ test('boxFromModel: with the identity frame the box maps straight onto the origi
   // only one that runs.
   const identity = { mode: 'crop', x: 0, y: 0, w: IMG_W, h: IMG_H };
   const box = boxFromModel({ x: 0.25, y: 0.1, w: 0.5, h: 0.6 }, identity, IMG_W, IMG_H);
-  assert.equal(box.x, 300 - MX);
-  assert.equal(box.y, 160 - MY);
-  assert.equal(box.x + box.w, 900 + MX);
-  assert.equal(box.y + box.h, 1120 + MY);
+  const mx = modelMargin(0.5 * IMG_W), my = modelMargin(0.6 * IMG_H);
+  assert.equal(box.x, 300 - mx);
+  assert.equal(box.y, 160 - my);
+  assert.equal(box.x + box.w, 900 + mx);
+  assert.equal(box.y + box.h, 1120 + my);
+});
+
+test('boxFromModel: eine mit dem Auge gezeichnete Box bekommt mehr Luft als eine gemessene', () => {
+  // Beobachtet am 2026-08-23: im Titelbild eines eingestellten Inserats lief der rechte
+  // Ärmel in die Bildkante. Der Rahmen kann die Box nicht anschneiden — also enthielt die
+  // Box den Ärmel nicht. Eine zu weite Box kostet Hintergrund, eine zu enge den Ärmel.
+  assert.ok(DEFAULTS.modelMarginPct > DEFAULTS.safetyMarginPct, 'sonst wäre der Zuschlag keiner');
+
+  const w = 3024, h = 4032;
+  const identity = { mode: 'crop', x: 0, y: 0, w, h };
+  const drawn = { x: 0.20, y: 0.20, w: 0.60, h: 0.50 };
+  const box = boxFromModel(drawn, identity, w, h);
+
+  const grown = Math.round(drawn.w * w * DEFAULTS.modelMarginPct);
+  assert.equal(box.x, Math.round(drawn.x * w) - grown);
+  assert.equal(box.x + box.w, Math.round((drawn.x + drawn.w) * w) + grown);
 });
 
 test('modelBoxVerdict: ein Etikett von 1,5 % der Fläche ist ein Zuschnitt, kein Missverständnis', () => {

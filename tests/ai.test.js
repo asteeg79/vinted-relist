@@ -38,6 +38,8 @@ function response(overrides = {}) {
           category_group: 'clothing',
           colors: ['schwarz'],
           material: 'Baumwolle',
+          isbn: null,
+          book_language: null,
           description_sentence: 'Ein schlichter Hoodie in gerader Passform.',
           description_facts: [
             { label: 'Material', value: 'Baumwolle' },
@@ -120,6 +122,25 @@ test('buildAnalysisRequest: the prompt says WHERE size labels sit, not just to r
   assert.match(body.system, /ZEICHENGETREU/, 'no unit conversion, no tidying up');
 });
 
+test('buildAnalysisRequest: der Prompt sagt, WO die ISBN steht', () => {
+  // Vinted lehnt ein Buchinserat ohne ISBN ab (gemessen 2026-08-23). „Gib die ISBN an"
+  // hilft einem Modell wenig — wo sie steht und wie sie aussieht, schon.
+  const body = buildAnalysisRequest(IMAGES, { settings: DEFAULT_SETTINGS });
+  assert.match(body.system, /Strichcode/);
+  assert.match(body.system, /978/);
+  assert.match(body.system, /geraten wird sie nicht/, 'eine erfundene ISBN benennt ein fremdes Buch');
+});
+
+test('buildAnalysisRequest: der Prompt sagt, WIE die Box zu messen ist', () => {
+  // „Lieber etwas Hintergrund zu viel" stand schon drin, und trotzdem lief im Titelbild
+  // eines eingestellten Inserats der rechte Ärmel in die Bildkante. Eine Haltung ist keine
+  // Anweisung: die Teile, die zuerst herausfallen, muss man benennen.
+  const body = buildAnalysisRequest(IMAGES, { settings: DEFAULT_SETTINGS });
+  assert.match(body.system, /FINGERBREIT HINTERGRUND/);
+  assert.match(body.system, /Ärmelspitzen/);
+  assert.match(body.system, /Saum/);
+});
+
 test('buildAnalysisRequest: the box is the ANSWER to the distractions, not a second opinion', () => {
   // Im ersten echten Inserat (2026-08-21) standen unten weiterhin die Füße des
   // Fotografen im Bild — das Modell hatte sie benannt UND die Box benutzt. Beide Felder
@@ -130,6 +151,22 @@ test('buildAnalysisRequest: the box is the ANSWER to the distractions, not a sec
   assert.match(body.system, /untere Kante/, 'sagt, was zu tun ist, nicht nur was falsch wäre');
   assert.match(body.system, /Artikel Vorrang/, 'berührt die Störung den Artikel, gewinnt der Artikel');
   assert.doesNotMatch(body.system, /GANZ und großzügig/, 'die alte Formel lud genau dazu ein');
+});
+
+test('buildAnalysisRequest: die Box gehört auf JEDES Foto, nicht nur auf gestörte', () => {
+  // Der Regressionsfall (2026-08-23, Version 0.108): ein grauer Pullover flach auf
+  // Holzboden, keine Störung. Der alte Prompt ließ die Box dann null — und der Zuschnitt
+  // hing allein an der Hintergrund-Heuristik, die auf strukturiertem Boden (Holzmaserung,
+  // ähnliche Helligkeit) den Artikel nicht mittig trifft. Die Box ist jetzt das, worauf
+  // der 4:5-Rahmen zentriert wird, also muss sie auf jedem Foto stehen.
+  const body = buildAnalysisRequest(IMAGES, { settings: DEFAULT_SETTINGS });
+  assert.match(body.system, /JEDEM FOTO/, 'die Box wird für jedes Foto verlangt');
+  assert.match(body.system, /zentriert/i, 'der Prompt sagt, wozu die Box dient');
+  // null ist jetzt der Ausnahmefall „füllt das Bild randlos", nicht mehr „nichts Störendes".
+  assert.match(body.system, /randlos ausfüllt/);
+  // Auch die Schema-Beschreibung des Felds trägt die neue Regel.
+  const box = body.tools[0].input_schema.properties.photo_order.items.properties.article_box;
+  assert.match(box.description, /JEDEM Foto/);
 });
 
 test('buildAnalysisRequest: the condition is judged by Vinted\'s own definitions', () => {

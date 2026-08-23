@@ -10,7 +10,10 @@
   <header class="header">
     <div class="brand">
       <h1>Studio</h1>
-      <p class="subtitle">Aus Fotos wird ein Inserat</p>
+      <!-- Die Version gehört sichtbar in die Oberfläche: nach einem „bitte neu laden" ist
+           sie die einzige Auskunft darüber, ob das auch passiert ist. Sie stand bisher nur
+           im kopierten Log — also genau dort, wo man sie erst sucht, wenn es zu spät ist. -->
+      <p class="subtitle">Aus Fotos wird ein Inserat · <span id="version">…</span></p>
     </div>
     <!-- Text und Farbe kommen aus lib/gates.js#publishModeNote — hier steht nur der
          vorsichtigste Anfangszustand, bevor das erste render() gelaufen ist. -->
