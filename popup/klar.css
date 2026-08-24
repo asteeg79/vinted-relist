@@ -261,3 +261,17 @@ input[type="range"]::-webkit-slider-thumb {
 
 /* ---------- Fuß ---------- */
 .footer { border-top-color: var(--line-soft); }
+
+/* ---------- Phasenliste im Fortschritt ---------- */
+/* Erledigtes tritt zurück, ohne zu verschwinden; die laufende Phase ist die einzige mit
+   Gewicht. Dieselbe Staffelung wie im Toast auf der Vinted-Seite. */
+.progress-steps { border-top: 1px solid var(--line-soft); padding-top: 8px; }
+
+.progress-phase.is-done { color: var(--ink-3); }
+.progress-phase.is-done .progress-mark { color: var(--ok-edge); }
+
+.progress-phase.is-current { color: var(--ink); font-weight: 700; }
+.progress-phase.is-current .progress-mark { color: var(--teal-dark); }
+
+.progress-phase.is-todo { color: var(--ink-3); }
+.progress-phase.is-todo .progress-mark { color: #c7cfd2; }

@@ -201,8 +201,15 @@ if (window.__vintedRelistLoaded) {
     return toast;
   }
 
-  /** Render/update the progress bar inside the toast. */
-  function setToastProgress(pct, step) {
+  /**
+   * Render/update the progress bar inside the toast, plus the phase list.
+   *
+   * `steps` kommt fertig aus dem Fortschritts-Datensatz (`lib/steps.js` entscheidet, der
+   * Adapter wählt die Liste). Hier wird nichts abgeleitet: dieses Skript ist als
+   * Manifest-Content-Script geladen und darf keine Module importieren — es wäre also
+   * ausgerechnet die Stelle, an der eine zweite Kopie der Regel niemand prüft.
+   */
+  function setToastProgress(pct, step, steps) {
     const toast = ensureToast();
     toast.classList.remove('hide');
     const body = toast.querySelector('.vr-toast-body');
@@ -214,11 +221,26 @@ if (window.__vintedRelistLoaded) {
           <span class="vr-toast-pct">0%</span>
         </div>
         <div class="vr-toast-track"><div class="vr-toast-fill"></div></div>
+        <ul class="vr-toast-steps"></ul>
       `;
     }
     body.querySelector('.vr-toast-step').textContent = step || '…';
     body.querySelector('.vr-toast-pct').textContent = `${Math.round(pct)}%`;
     body.querySelector('.vr-toast-fill').style.width = `${pct}%`;
+
+    const list = body.querySelector('.vr-toast-steps');
+    list.replaceChildren(...(steps || []).map(s => {
+      const li = document.createElement('li');
+      li.className = 'vr-toast-phase is-' + s.state;
+      // Das Zeichen sagt die Lage auch dann, wenn jemand die Farben nicht unterscheidet.
+      const mark = document.createElement('span');
+      mark.className = 'vr-toast-mark';
+      mark.textContent = s.state === 'done' ? '✓' : (s.state === 'current' ? '▸' : '·');
+      const text = document.createElement('span');
+      text.textContent = s.label;
+      li.append(mark, text);
+      return li;
+    }));
   }
 
   /** Swap the toast to a final result message (optionally with a link to the new item). */
@@ -249,7 +271,7 @@ if (window.__vintedRelistLoaded) {
     const p = changes[REFRESH_KEY].newValue;
     if (!p || typeof p.pct !== 'number') return;
     if (!thisTabRunning) return;
-    setToastProgress(p.pct, p.step);
+    setToastProgress(p.pct, p.step, p.steps);
   });
 
   // ----------- Click handler: the full on-page relist flow -----------
@@ -267,9 +289,12 @@ if (window.__vintedRelistLoaded) {
       // 1. Preflight → interest, recent-relist counts, and the ordered gates the user
       //    must clear (non-destructive). Every decision was made in lib/gates.js; this
       //    script only shows them, so the toast and the popup can't drift apart.
-      setToastProgress(2, 'Artikel prüfen…');
+      setToastProgress(2, 'Artikel prüfen…', []);
       const pre = await chrome.runtime.sendMessage({ type: 'relist/preflight', url });
       if (!pre?.ok) throw new Error(pre?.error || 'Preflight fehlgeschlagen');
+      // Ab hier steht die Liste — noch ohne einen erledigten Schritt, aber vollständig.
+      // Wer auf „Relist" drückt, sieht sofort, was ihn erwartet, statt eine Zahl.
+      const steps = pre.steps || [];
 
       // 2. Walk the gates in order; any refusal aborts.
       for (const gate of pre.gates || []) {
@@ -280,7 +305,7 @@ if (window.__vintedRelistLoaded) {
       }
 
       // 3. Run the destructive pipeline; the SW streams progress into the toast meanwhile.
-      setToastProgress(2, 'Anmeldedaten prüfen…');
+      setToastProgress(2, 'Anmeldedaten prüfen…', steps);
       const res = await chrome.runtime.sendMessage({ type: 'relist/run', url });
 
       setToastResult(res?.message || { kind: 'error', text: 'Fehler: unbekannt', autoHideMs: 10000 });

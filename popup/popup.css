@@ -66,6 +66,19 @@ body {
   letter-spacing: -0.01em;
 }
 
+.progress-steps { list-style: none; margin: 8px 0 0; padding: 0; }
+
+.progress-phase {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 1px 0;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.progress-mark { width: 9px; flex: none; text-align: center; font-size: 10px; }
+
 .version-line { margin: 2px 0 0; font-size: 10.5px; color: var(--ink-3); }
 
 .subtitle {

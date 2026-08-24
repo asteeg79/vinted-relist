@@ -33,6 +33,7 @@ import { saveLiveTokens, extractTokensFromHeaders } from '../lib/auth.js';
 import { clearProgress } from '../lib/progress.js';
 import { apiMatchPatterns } from '../lib/domains.js';
 import { describeOutcome, describeFailure, describeDraftOutcome, draftGatesFor } from '../lib/gates.js';
+import { RELIST_STEPS, stepsAt } from '../lib/steps.js';
 import { setConfirmedDelete, setConfirmedCreate, hasConfirmedCreate } from '../lib/confirmation.js';
 import { getSettings } from '../lib/settings.js';
 
@@ -63,7 +64,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   switch (msg?.type) {
     case 'relist/preflight':
       preflight(msg.url)
-        .then(result => sendResponse({ ok: true, ...result }))
+        // Die Phasenliste reist mit der Vorprüfung: die Oberfläche kann sie vom ersten
+        // Klick an zeigen, statt bis zur ersten Fortschrittsmeldung leer zu bleiben. Das
+        // Content-Skript könnte sie sich ohnehin nicht selbst holen — es darf keine Module
+        // importieren.
+        .then(result => sendResponse({ ok: true, steps: stepsAt(RELIST_STEPS, 0), ...result }))
         .catch(err => sendResponse({ ok: false, error: err.message, name: err.name }));
       return true;
 

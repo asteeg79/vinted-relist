@@ -38,11 +38,34 @@ function setLoading(loading) {
   btn.disabled = loading;
 }
 
-function showProgress(pct, step) {
+function showProgress(pct, step, steps) {
   $('progress').hidden = false;
   $('progressStep').textContent = step || '';
+  renderSteps(steps);
   $('progressFill').style.width = `${pct}%`;
   $('progressPct').textContent = `${Math.round(pct)}%`;
+}
+
+/**
+ * Die Phasenliste — erledigt, laufend, ausstehend.
+ *
+ * Das Zeichen sagt die Lage auch dann, wenn jemand die Farben nicht unterscheidet; das ist
+ * derselbe Aufbau wie im Toast auf der Vinted-Seite, damit man nicht zwei Darstellungen
+ * lernen muss.
+ */
+function renderSteps(steps) {
+  const list = $('progressSteps');
+  list.replaceChildren(...(steps || []).map(s => {
+    const li = document.createElement('li');
+    li.className = 'progress-phase is-' + s.state;
+    const mark = document.createElement('span');
+    mark.className = 'progress-mark';
+    mark.textContent = s.state === 'done' ? '✓' : (s.state === 'current' ? '▸' : '·');
+    const text = document.createElement('span');
+    text.textContent = s.label;
+    li.append(mark, text);
+    return li;
+  }));
 }
 
 function hideProgress() {
@@ -50,6 +73,7 @@ function hideProgress() {
   $('progressFill').style.width = '0%';
   $('progressPct').textContent = '0%';
   $('progressStep').textContent = '';
+  renderSteps([]);
 }
 
 // Subscribe to storage so the bar + history update live while the SW works (even though
@@ -58,7 +82,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local') return;
   if (changes[PROGRESS_KEY]) {
     const p = changes[PROGRESS_KEY].newValue;
-    if (p && typeof p.pct === 'number') showProgress(p.pct, p.step);
+    if (p && typeof p.pct === 'number') showProgress(p.pct, p.step, p.steps);
     else hideProgress(); // progress cleared → hide
   }
   if (changes[HISTORY_KEY]) renderHistory();
@@ -66,7 +90,9 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
 // If the popup is (re)opened mid-run, restore the current progress immediately.
 chrome.storage.local.get(PROGRESS_KEY, ({ [PROGRESS_KEY]: progress }) => {
-  if (progress && typeof progress.pct === 'number' && progress.pct < 100) showProgress(progress.pct, progress.step);
+  if (progress && typeof progress.pct === 'number' && progress.pct < 100) {
+    showProgress(progress.pct, progress.step, progress.steps);
+  }
 });
 
 async function refreshLog() {

@@ -1,0 +1,164 @@
+/* =============================================================================
+   klar.css — Theme-Layer „Klar" für die Oberfläche AUF der Vinted-Seite
+   -----------------------------------------------------------------------------
+   Wird NACH inject.css geladen und überschreibt nur Erscheinung, keine Struktur.
+   Es wird keine Zeile in inject.css geändert; zum Zurückrollen den Eintrag aus
+   `manifest.json` entfernen — genau wie bei popup/klar.css und studio/klar.css.
+
+   Die Richtung in drei Regeln (dieselben wie dort):
+     1. Weiße Flächen, keine Radien, keine Schatten außer dem des Fensters.
+     2. Teal ist Kopfband und die EINE primäre Aktion — sonst nichts.
+     3. Status ist eine 3-px-Kante links plus getönte Fläche. Rot bleibt Fehlern.
+
+   Eine Einschränkung, die es hier und nur hier gibt: dieses Blatt liegt in einer
+   FREMDEN Seite. Jede Regel ist deshalb auf `.vr-*` verankert, und `:root` bleibt
+   unangetastet — Vinteds eigene Variablen gehören Vinted.
+   ========================================================================== */
+
+/* ---------- Knopf in der Artikelkarte ---------- */
+.vr-bump-btn {
+  border-radius: 0;
+  box-shadow: none;
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  font-size: 10.5px;
+}
+
+/* ---------- Toast ---------- */
+.vr-toast {
+  border-radius: 0;
+  padding: 0;
+  border: 1px solid #dfe3e5;
+  /* Der eine erlaubte Schatten: er trägt das Fenster, er schmückt es nicht. */
+  box-shadow: 0 10px 30px rgba(13, 18, 20, 0.14);
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-variant-numeric: tabular-nums;
+  color: #0d1214;
+}
+
+/* Kopfband, wie im Popup und im Studio. */
+.vr-toast-header {
+  margin: 0;
+  padding: 9px 12px;
+  background: #07959d;
+  color: #b8ebee;
+}
+
+.vr-toast-title {
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.vr-toast-close { color: #b8ebee; }
+.vr-toast-close:hover { color: #fff; }
+
+.vr-toast-body { padding: 12px; }
+
+.vr-toast-step { color: #3c464a; }
+.vr-toast-pct { color: #8d979b; }
+
+.vr-toast-track {
+  border-radius: 0;
+  height: 4px;
+  background: #eef1f2;
+}
+
+/* Eine Farbe, kein Verlauf — der Verlauf war Zierde, und Teal trägt hier schon das
+   Kopfband. */
+.vr-toast-fill { background: #09b1ba; }
+
+/* ---------- Phasenliste: was war, was kommt ---------- */
+.vr-toast-steps {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 8px 0 0;
+  border-top: 1px solid #eef1f2;
+}
+
+.vr-toast-phase {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 2px 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.vr-toast-mark {
+  width: 9px;
+  flex: none;
+  text-align: center;
+  font-size: 10px;
+}
+
+/* Erledigtes tritt zurück, ohne zu verschwinden — man soll sehen, dass es da war. */
+.vr-toast-phase.is-done { color: #8d979b; }
+.vr-toast-phase.is-done .vr-toast-mark { color: #1d6b3a; }
+
+/* Die laufende Phase ist die einzige, die Gewicht bekommt. */
+.vr-toast-phase.is-current {
+  color: #0d1214;
+  font-weight: 700;
+}
+.vr-toast-phase.is-current .vr-toast-mark { color: #07959d; }
+
+/* Was noch aussteht, ist lesbar und leise — kein Grau, in dem man raten muss. */
+.vr-toast-phase.is-todo { color: #8d979b; }
+.vr-toast-phase.is-todo .vr-toast-mark { color: #c7cfd2; }
+
+/* ---------- Ergebnis: Kante links plus getönte Fläche ---------- */
+.vr-toast-result {
+  padding: 8px 10px;
+  border-left: 3px solid;
+}
+
+.vr-toast-result.ok { border-color: #1d6b3a; background: #f4faf6; color: #14512c; }
+.vr-toast-result.warning { border-color: #b57a12; background: #fdf9f1; color: #6b4a00; }
+.vr-toast-result.error { border-color: #a12a2a; background: #fdf5f5; color: #7a1919; }
+
+.vr-toast-link { color: #07959d; }
+
+/* ---------- Dialog ---------- */
+.vr-dialog {
+  border-radius: 0;
+  border: 1px solid #dfe3e5;
+  box-shadow: 0 10px 30px rgba(13, 18, 20, 0.18);
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  padding: 0;
+}
+
+.vr-dialog h3 {
+  margin: 0;
+  padding: 9px 14px;
+  background: #07959d;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.vr-dialog p { margin: 12px 14px 0; color: #3c464a; }
+.vr-dialog ul { margin: 8px 14px 0; color: #3c464a; }
+
+.vr-dialog-actions {
+  margin: 14px 0 0;
+  padding: 12px 14px;
+  border-top: 1px solid #eef1f2;
+  background: #fafbfb;
+}
+
+.vr-btn { border-radius: 0; font-weight: 700; }
+
+.vr-btn-cancel { border-color: #dfe3e5; color: #3c464a; }
+.vr-btn-cancel:hover { background: #f2f4f5; }
+
+/* Das Gate vor dem Löschen ist unumkehrbar — Tinte, nicht Rot. Rot heißt in diesem
+   Haus „etwas ist schiefgegangen", und hier geht nichts schief, hier wird entschieden. */
+.vr-btn-confirm { background: #0d1214; }
+.vr-btn-confirm:hover { background: #000; }
