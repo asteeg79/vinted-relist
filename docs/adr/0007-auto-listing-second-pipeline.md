@@ -59,6 +59,26 @@ eine andere Kategorie als die Vinted-Session: Sein Verlust kostet Geld, nicht de
   Key mit hartem Ausgabelimit im Anthropic-Konto: Verschlüsselung senkt die
   Wahrscheinlichkeit, das Limit begrenzt den Schaden.
 
+## Addendum 2026-08-25 (v0.116.0) — gebaut, mit zwei Abweichungen
+
+Die Pipeline läuft, an echten Artikeln. Zwei Punkte oben stimmen so nicht mehr:
+
+- **`draft/lookup` gibt es nicht.** Es steht oben als lesende Nachricht an den Worker; die
+  Taxonomie-Aufrufe laufen stattdessen **direkt aus dem Studio-Tab** — lesend darf das
+  (Addendum zu ADR-0001). Über die Naht geht nur `draft/publish`, plus `draft/gates` und
+  `draft/confirmed`. Das ist die schärfere Fassung derselben Absicht: der Worker bekommt
+  einen Aufruf und gibt eine Antwort, statt minutenlang zu leben.
+- **„Ein Vinted-Tab bleibt Voraussetzung"** gilt nur fürs *Veröffentlichen*. Einen Draft
+  vorzubereiten — Fotos, Zuschnitt, Erkennung, IDs auflösen, Preis — braucht keinen offenen
+  Vinted-Tab. Es braucht eine gültige Sitzung; ist die abgelaufen, sagen die Lookups das
+  ausdrücklich (`SESSION_EXPIRED`), statt 401 zu verschlucken.
+
+Dazu die Namensfrage: die Extension heißt weiterhin „Vinted Relist". Der neutrale Name war
+an Stufe 3 gekoppelt, und das Stufenmodell hat sich als Oberfläche nicht bewährt (siehe
+`docs/KONZEPT_AUTO_LISTING.md` §4.1). Umbenennen bleibt offen.
+
+Die Naht selbst hat inzwischen ihre eigene ADR: **ADR-0008**.
+
 ## Do not re-suggest
 
 **„Ein Node-Agent postet das."** Mit einem echten Browser über CDP technisch möglich — der

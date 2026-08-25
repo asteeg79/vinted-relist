@@ -127,13 +127,71 @@ relist/run(url)
    └─ [100%]  History-Eintrag (Erfolg) ─────────────────► Erfolg → neue Artikel-URL
 ```
 
+---
+
+## 3. Auto-Listing: von Fotos zum Inserat
+
+Zwei Hälften mit einer Naht dazwischen. **Links** die Vorbereitung im Studio-Tab: frei,
+lesend, jederzeit abbrechbar, ohne Schloss. **Rechts** das Veröffentlichen im Service
+Worker: ein Aufruf, eine Antwort, unter demselben Schreib-Schloss wie ein Relist.
+
+```mermaid
+flowchart TD
+    subgraph Vorbereitung["Vorbereitung — Studio-Tab, kein Schloss"]
+        A["Fotos hineinziehen"] --> B["prepare() je Foto:<br/>EXIF, Abschälung, 4:5-Rahmen"]
+        B --> C["Zwei Kopien:<br/>Inserat (≤1080×1350) · Modell (ganzes Foto)"]
+        C --> D["EIN KI-Call über alle Modellkopien<br/>Felder + article_box je Foto"]
+        D --> E{"article_box<br/>brauchbar?"}
+        E -- "nein — not_a_box,<br/>too_small, full_frame …" --> F["erster Zuschnitt bleibt"]
+        E -- ja --> G["Zweiter Durchgang:<br/>neu zeichnen AUS DEM ORIGINAL"]
+        F --> H
+        G --> H["Lookup — Strings zu Vinted-IDs<br/>Kategorie, dann Größen, dann Preisspanne"]
+        H --> I["draftView(): je Feld<br/>ok · bestätigen · fehlt"]
+        I --> J{"canPublish?"}
+        J -- nein --> K["Noch offen — der Grund steht am Feld<br/>tippen, wählen, bestätigen"] --> H
+    end
+
+    J -- ja --> L["draft/publish"]
+
+    subgraph Veröffentlichen["Veröffentlichen — Service Worker, Schreib-Schloss"]
+        L --> M["draftView() ERNEUT<br/>(die UI darf ihre Reife nicht selbst behaupten)"]
+        M -- nicht vollständig --> MErr["Fehler — Draft ist nicht vollständig"]
+        M -- ok --> N{"Verlangt die Kategorie<br/>ein Attribut, das der Beutel<br/>nicht trägt?"}
+        N -- ja --> NErr["Stopp, VOR dem ersten Upload —<br/>von Hand auf Vinted anlegen"]
+        N -- nein --> O["[15–70%] Fotos hochladen<br/>eine upload_session_id, 400 ms Pause"]
+        O --> P["[70%] Gegenprobe:<br/>Vinteds eigene Fotoerkennung"]
+        P --> Q{"Widerspruch?"}
+        Q -- "ja, und keine<br/>eigene Wahl" --> QConf["conflict — Feld geleert,<br/>BEIDE Antworten angeboten"]
+        Q -- nein --> R["[80%] Payload bauen<br/>+ Sendungsgröße erfragen"]
+        R --> S{"draftCreateEnabled?"}
+        S -- "nein — der Standard" --> SDry[["Trockenlauf — Payload ins Log,<br/>nichts gesendet"]]
+        S -- ja --> T["[90%] POST item_upload/items"]
+        T --> U{"Angenommen?"}
+        U -- "nein — 400/422" --> UErr["Vinteds Feldfehler als Satz,<br/>plus der Hinweis auf die hochgeladenen Fotos"]
+        U -- ja --> V[["Erfolg — das Inserat steht.<br/>Der Draft ist verbraucht"]]
+    end
+```
+
+**Drei Stellen, an denen bewusst angehalten wird, und je ein Grund:**
+
+| Stelle | Warum hier und nicht später |
+|---|---|
+| `draftView()` im Worker, **erneut** | Das Studio ist die ungetestete Zone; es darf seine eigene Reife nicht behaupten. Dieselbe Regel wie „`deleteItem` wird nie erreicht, wenn oben etwas schieflief". |
+| Kategorie-Attribute **vor** dem Upload | Ein Fehlschlag danach kostet acht Uploads und hinterlässt verwaiste Fotos. Der Beutel, gegen den geprüft wird, ist genau der, der auch mitgeht. |
+| Gegenprobe **nach** dem Upload | Sie geht nicht früher: Vinteds Fotoerkennung braucht die hochgeladenen Fotos. Deshalb ist sie eine `return`, kein `throw` — die beiden Antworten müssen zur Oberfläche zurück, damit man entscheiden kann. |
+
+**Und der Ausweg aus der Gegenprobe:** Eine ausdrückliche Wahl des Nutzers steht, auch wenn
+Vinted widerspricht (`overriddenBy` protokolliert, wen er überstimmt hat). Ohne das
+wiederholte sich derselbe Einwand endlos — der Kinderpullover, den Vinted für einen
+Herren-Sweater hält, wäre nie einstellbar gewesen.
+
 **Sicherheitsprinzip:** *create-then-delete*. Der Klon wird immer **zuerst** erstellt
 (und optional verifiziert), das Original erst **danach** gelöscht. Bricht irgendetwas
 ab, behält der Nutzer sein Original — schlimmstenfalls gibt es kurz zwei Listings.
 
 ---
 
-## 3. CSRF-/Auth-Beschaffung (`ensureAuth`)
+## 4. CSRF-/Auth-Beschaffung (`ensureAuth`)
 
 ```mermaid
 flowchart TD
@@ -156,7 +214,7 @@ der aktiven Session entspricht.
 
 ---
 
-## 4. On-Page „Relist"-Button (Content-Script)
+## 5. On-Page „Relist"-Button (Content-Script)
 
 ```mermaid
 sequenceDiagram
@@ -188,7 +246,7 @@ Content-Script ist ein klassisches Skript und kann `lib/steps.js` nicht importie
 
 ---
 
-## 5. Storage-Schlüssel (chrome.storage.local)
+## 6. Storage-Schlüssel (chrome.storage.local)
 
 | Key              | Beschreibung                                              | Erzeuger            |
 |------------------|-----------------------------------------------------------|---------------------|

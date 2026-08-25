@@ -37,9 +37,16 @@ Measured during the auto-listing spike (see `docs/TECHNISCHE_DOKUMENTATION.md` �
 with an HTML page — the edge, not the API.
 
 That does not soften this ADR: it was always about *state-changing* requests, and the
-create call was **not** retested. Reads may go direct (the auto-listing taxonomy lookups
-do, which is why Stufe 2 needs no open Vinted tab); writes keep crossing the content
-script until someone measures otherwise.
+create call was **not** retested. Reads may go direct — the auto-listing taxonomy lookups
+do, which is why preparing a draft needs no open Vinted tab at all. Writes keep crossing the
+content script until someone measures otherwise.
+
+**One read is the exception that proves the rule.** Vinted's package-size suggestion
+(`/api/v2/item_upload/package_sizes/suggestion`) lives on a *different host*, rejects the
+CSRF headers outright (the CORS preflight fails), and needs an `upload_session_id` — so it
+exists only after the photos are up. It goes through the content script like a write, and
+`lib/taxonomy.js` deliberately does **not** carry it: a plausible-looking endpoint that
+could never have worked sat there for a while precisely because nobody had called it.
 
 ## Do not re-suggest
 

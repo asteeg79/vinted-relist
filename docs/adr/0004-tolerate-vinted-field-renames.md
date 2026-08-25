@@ -20,10 +20,10 @@ Diagnosing it required comparing two log lines a month apart and noticing an *ab
    names plus the values of every candidate source field. It fires only on a rejection —
    an item that legitimately lacks a size (a comic) is not a problem and must not log a
    scary line. `fetchItem_shape` carries the resolved values on every run.
-4. `item_attributes` is replayed verbatim into the create payload. Vinted keeps
+3. `item_attributes` is replayed verbatim into the create payload. Vinted keeps
    per-category fields there (condition, book language, …) and which ones a category
    demands changes; dropping the bag silently loses data the user had set.
-3. The user-facing error distinguishes "we could not read this" from "you left this blank",
+4. The user-facing error distinguishes "we could not read this" from "you left this blank",
    because the advice differs completely.
 
 ## Consequences
@@ -35,6 +35,26 @@ Diagnosing it required comparing two log lines a month apart and noticing an *ab
 
 Reading `src.status_id` (or any other volatile field) directly because "that's what the API
 returns". It is what the API returned on the day it was written.
+
+## Addendum 2026-08-25 — the auto-listing path has no bag to replay
+
+Point 3 above is a *relist* property: there is a source item, so the attribute bag is copied
+across. The auto-listing pipeline has no predecessor, and an attribute value cannot be
+invented (ADR-0005). Two consequences:
+
+- **`unfillableAttributeCodes(attributes, provided)`** asks the category what it demands and
+  compares that against the bag this run will actually send — **before the first photo
+  upload**, so a category we cannot serve costs nothing. A fixed exception list was tried
+  first and was wrong: it counted `language_book` as answered for every article, although
+  only books fill it. What is "covered" is partly fixed (fields with their own payload
+  column) and partly per-run; the caller states the second half.
+- The failure text is shared. `validationErrorsOf` + `describeValidationErrors` in
+  `lib/item.js` turn Vinted's field-wise German into one sentence for **both** pipelines;
+  each adds only its own postscript (the edit URL there, the state of the photos here).
+
+Measured 2026-08-21: for every category checked (clothing, shoes, books, toys), the
+attribute list comes back **empty**. The guard is a safety net, not the normal path — which
+is exactly why it must not be quietly permissive.
 
 ## Confirmed shapes (2026-08-12)
 

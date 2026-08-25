@@ -1,20 +1,31 @@
 # Technische Dokumentation — Vinted Relist
 
-Chrome-Extension (Manifest V3), die einen Vinted-Artikel automatisiert **löscht und neu
-einstellt** ("relist"/"bump"), um ihn in der Suche wieder nach oben zu bringen. Sie
-arbeitet ausschließlich in der bestehenden Browser-Session des Nutzers — kein Backend,
-keine gespeicherten Zugangsdaten.
+**Stand: v0.117.0 · 2026-08-25 · 868 Tests**
 
-> Diese Doku ergänzt das [Ablaufdiagramm](./ABLAUFDIAGRAMM.md). Die reverse-engineerten
-> API-Details sind zusätzlich im Projekt-Memory hinterlegt.
+Chrome-Extension (Manifest V3) mit **zwei Pipelines**:
 
-> **Zweite Pipeline:** Das Auto-Listing (Artikel aus Fotos erstellen) hat ein eigenes
-> Konzept — [KONZEPT_AUTO_LISTING.md](./KONZEPT_AUTO_LISTING.md), Verortung und Key-Ablage
-> in [ADR-0007](./adr/0007-auto-listing-second-pipeline.md), Umsetzung in
-> [IMPLEMENTIERUNGSPLAN_AUTO_LISTING.md](./IMPLEMENTIERUNGSPLAN_AUTO_LISTING.md). Das
-> Prinzip „kein Backend, keine gespeicherten Zugangsdaten" oben ist dort präzisiert zu
-> „keine gespeicherten **Vinted**-Zugangsdaten, kein Backend im Vinted-Pfad": der eigene
-> Anthropic-Key liegt verschlüsselt im Extension-Storage.
+- **Relist** — einen bestehenden Vinted-Artikel automatisiert löschen und neu einstellen
+  („bump"), um ihn in der Suche wieder nach oben zu bringen.
+- **Auto-Listing** — aus Fotos ein neues Inserat bauen: zuschneiden, erkennen, Felder gegen
+  Vinteds Listen auflösen, veröffentlichen.
+
+Beide arbeiten ausschließlich in der bestehenden Browser-Session des Nutzers.
+
+> **Diese Datei beschreibt den Ist-Stand.** Sie ist die einzige Stelle, an der Vinteds
+> undokumentierte API festgehalten ist (§6) — jeder Befund darin ist gemessen, mit Datum.
+>
+> Wer wissen will, *warum* etwas so entschieden wurde, liest die
+> [ADRs](./adr/) und [KONZEPT_AUTO_LISTING.md](./KONZEPT_AUTO_LISTING.md); die sind
+> Entscheidungsprotokolle und werden nicht rückwirkend geglättet, sondern mit Nachträgen
+> versehen, wo die Wirklichkeit sie korrigiert hat.
+>
+> Die Abläufe stehen als Diagramme im [Ablaufdiagramm](./ABLAUFDIAGRAMM.md), der Einstieg
+> in [README.md](../README.md), die Begriffe in [CONTEXT.md](../CONTEXT.md).
+
+> **Ein Prinzip, präzisiert:** „kein Backend, keine gespeicherten Zugangsdaten" gilt seit
+> dem Auto-Listing (ADR-0007) in der Fassung *„keine gespeicherten **Vinted**-Zugangsdaten,
+> kein Backend im Vinted-Pfad"*. Der eigene Anthropic-Key liegt verschlüsselt im
+> Extension-Storage; sein Verlust kostet Geld, nicht den Account.
 
 ---
 
@@ -793,8 +804,8 @@ GET /api/v2/item_price_suggestions?catalog_id=196&brand_id=53&status_id=2
 ```
 
 - **Kein Foto nötig.** Drei Query-Parameter, sonst nichts. Der Vorschlag steht also schon
-  in der Vorbereitung zur Verfügung, nicht erst nach dem Upload — Anforderung A6 fällt
-  damit in Stufe 2 statt Stufe 3.
+  in der Vorbereitung zur Verfügung, nicht erst nach dem Upload — anders als die
+  Sendungsgröße, die ohne `upload_session_id` gar nicht existiert.
 - **Alle drei Parameter sind nötig.** Ohne `brand_id` antwortet der Endpoint mit `200`,
   aber ohne `price_suggestion` und mit `similar_sold_items_present: false`.
 - **`similar_sold_items_present` ist die Ehrlichkeitsangabe**: false heißt, es gibt keine
@@ -878,10 +889,11 @@ Konsequenzen:
 
 - **Der Origin ist für lesende Calls kein Hindernis.** Die 403 kam von den fehlenden
   Headern, nicht von `chrome-extension://`.
-- **Stufe 2 braucht keinen offenen Vinted-Tab.** Taxonomie, Markensuche und Preisspanne
-  kann das Studio selbst holen; `taxonomy.js` bekommt `fetch` als Transport injiziert
-  (Entscheidung 15 im Auto-Listing-Konzept). Die Nachricht `draft/lookup` wird dafür nicht
-  gebraucht.
+- **Einen Draft vorzubereiten braucht keinen offenen Vinted-Tab.** Taxonomie, Markensuche
+  und Preisspanne holt das Studio selbst; `taxonomy.js` bekommt `fetch` als Transport
+  injiziert (Entscheidung 15 im Auto-Listing-Konzept). Eine eigene Nachricht an den Worker
+  gibt es dafür nicht — das im Konzept geplante `draft/lookup` wurde nie gebraucht. Nur das
+  **Veröffentlichen** überquert die Naht.
 - **Der Auth-Bundle muss trotzdem vorliegen.** Die Tokens stammen aus dem
   webRequest-Snooping des Service Workers und werden pro Domain persistiert — ein einmal
   besuchter Vinted-Tab genügt, ein *offener* nicht.
@@ -1045,11 +1057,12 @@ Für das Auto-Listing kommen dazu:
 
 ## 11. Build, Validierung & Tests
 
-Kein Build-Step — die Extension wird als „entpackte Erweiterung" geladen.
+Kein Build-Step — die Extension wird als „entpackte Erweiterung" geladen. Die ganze
+Toolchain sind vier Skripte ohne eine einzige Abhängigkeit:
 
 ```bash
 npm run validate   # manifest.json, JS-Syntax, ESM-Import-Graph (mit chrome/DOM-Stub)
-npm test           # node:test Suite
+npm test           # node:test Suite — 868 Tests, ~3 s
 npm run coverage   # Coverage-Report
 npm run check      # validate + test
 ```

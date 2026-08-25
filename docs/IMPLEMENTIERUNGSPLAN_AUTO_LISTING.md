@@ -1,6 +1,41 @@
 # Implementierungsplan — Auto-Listing
 
-**Für Claude Code.** Diese Datei ist die Arbeitsanweisung. Aufruf im Repo-Root:
+> ## Status: abgearbeitet (Stand v0.116.0, 2026-08-25)
+>
+> **Diese Datei ist Historie, keine Arbeitsanweisung mehr.** Schritte 0a bis 11 sind
+> gebaut, getestet und live an echten Artikeln gelaufen. Wer wissen will, wie das
+> Auto-Listing heute funktioniert, liest `docs/TECHNISCHE_DOKUMENTATION.md` §7.2 und
+> `README.md`; wer wissen will, *warum* es so entschieden wurde,
+> `docs/KONZEPT_AUTO_LISTING.md`. Was unten steht, sagt, in welcher Reihenfolge es entstand
+> — und an welchen Stellen die Wirklichkeit den Plan korrigiert hat.
+>
+> **Offen geblieben:**
+>
+> | Schritt | Stand |
+> |---|---|
+> | 12 — Draft-Vorrat | nicht gebaut. Bisher hat niemand einen zweiten Draft parken wollen. |
+> | 13 — Umbenennung auf 1.0 | nicht gemacht. Die Extension heißt weiterhin „Vinted Relist". |
+>
+> **Wo der Plan danebenlag** (jeweils durch eine Messung an einem echten Artikel
+> korrigiert, Einzelheiten in der technischen Doku):
+>
+> - Das **Stufenmodell** aus dem Konzept war eine Entwicklungslandkarte, keine
+>   Nutzeroberfläche. Es stand eine Zeit lang oben rechts im Studio und beantwortete eine
+>   Frage, die niemand hatte. Heute steht dort nur, ob scharf geschaltet ist.
+> - Die **Gegenprobe** (Entscheidung C) brauchte einen Ausweg: eine ausdrückliche Wahl des
+>   Nutzers muss stehen bleiben, sonst wiederholt sich derselbe Widerspruch endlos.
+> - Die Modellkopie ist **das ganze Foto**, nicht der erste Zuschnitt — sonst warf die
+>   Abschälung genau das Etikett weg, das die Erkennung lesen sollte.
+> - `item_attributes` und `requiredFields` aus dem Katalog waren beide **nicht** brauchbar:
+>   der Attribut-Endpunkt antwortet leer, `offline_verification/criteria` für jede Kategorie
+>   gleich. Was eine Kategorie verlangt, sagt erst der abgelehnte Create.
+> - Die Sendungsgröße läuft über einen **anderen Host** und braucht die `upload_session_id`,
+>   existiert also erst nach dem Upload.
+>
+> ---
+
+**Ursprüngliche Fassung, für Claude Code als Arbeitsanweisung geschrieben.** Aufruf im
+Repo-Root war:
 
 > „Arbeite `docs/IMPLEMENTIERUNGSPLAN_AUTO_LISTING.md` ab, Schritt N."
 

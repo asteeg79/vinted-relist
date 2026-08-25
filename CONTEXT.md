@@ -61,6 +61,20 @@ Destroyed by a relist, which is the whole reason the interest gate exists.
 
 **Cooldown counts** — relists in the last rolling hour and 24 hours, from the history.
 
+## Progress
+
+**Phase** — one named stretch of a pipeline run: „Fotos übertragen", „Original löschen".
+The phases of both pipelines live in `lib/steps.js`, each with the percentage mark at which
+it begins. Never "step" in German copy — a *Schritt* is a step through the category tree.
+
+**Phasenliste** — the whole list with each phase marked `done`, `current` or `todo`.
+Derived from the percentage alone, because every phase already reports at a fixed,
+ascending mark. A phase counts as done only once the NEXT one has started, or the running
+one would show as ticked off while it works.
+
+**Laufende Meldung** (`step` in the progress record) — the one sentence next to the bar
+(„Foto 2/5: hochladen…"). Finer-grained than a phase, and always about right now.
+
 ## Auto-Listing
 
 Die Begriffe der zweiten Pipeline (ADR-0007, `docs/KONZEPT_AUTO_LISTING.md`) stehen hier
@@ -82,14 +96,32 @@ Erkennung, Textbau, Taxonomie-Lookups. Läuft frei, auch parallel zu einem Relis
 **Veröffentlichen** — die schreibende Phase: Foto-Upload plus Create. Nimmt dasselbe
 Lock wie `relist()`. Nie „posten", nie „einstellen" im Code.
 
-**Objektbox** — das Rechteck, in dem `crop.js` den fotografierten Artikel vermutet,
-inklusive Sicherheitsrand. Nie „Bounding Box".
+**Objektbox** — das Rechteck, in dem der Artikel auf einem Foto liegt, inklusive
+Sicherheitsrand. Zwei Quellen: die **Abschälung** (`objectBox`, schält Hintergrund von außen
+nach innen weg) und die **Artikelbox** des Modells (`article_box`, normiert auf den Rahmen,
+den es gesehen hat). Nie „Bounding Box".
+
+**Artikelbox** — die Box, die die Erkennung selbst um den Artikel gezeichnet hat. Sie ist
+das Einzige, was die Füße des Fotografen von einem Ärmel unterscheiden kann: der Abschälung
+sind beide gleich viel Objekt. `modelBoxVerdict` prüft sie und sagt bei einer Absage, warum
+— `malformed`, `outside`, `not_a_box`, `too_small`, `in_padding`, oder `full_frame`, was
+keine Absage ist, sondern „der Artikel füllt das Bild ohnehin".
 
 **Rahmen** — der 4:5-Ausschnitt, der aus einem Foto wird. Ein Rahmen schneidet nie in die
-Objektbox; passt keiner um sie herum, wird stattdessen gepaddet.
+Objektbox; passt keiner um sie herum, wird stattdessen gefüllt.
 
 **Padding** — das Auffüllen fehlender Bildfläche auf Hintergrundfarbe, statt das Objekt
 zu beschneiden. Der sichere Ausgang jedes Zweifelsfalls.
+
+**edges** — die vier Fakten, auf welchen Seiten der Artikel aus dem Bild läuft, seitenweise
+und **vor** Sicherheitsrand und Clamp erhoben. Danach ist die Auskunft weg: ein `x` von 0
+heißt sowohl „der Artikel beginnt in Spalte 0" als auch „der Rand hätte nach links gereicht,
+das Bild aber nicht". Nur das Erste darf die Zentrierung verhindern.
+
+**touchesEdge** — die Behauptung „der Artikel wurde schon beim Fotografieren
+angeschnitten". Verwandt mit `edges`, aber nicht dasselbe: `edges` ist Geometrie. Bei der
+Abschälung fallen beide zusammen; für die Artikelbox bleibt die Behauptung dem
+`cropped_off`-Urteil des Modells vorbehalten.
 
 **Profil** — der Satz Titel-Slots einer Warengruppe (`clothing`, `shoes`, `accessories`,
 `media`, `generic`), mit Pflicht-Slots und Kürzungsreihenfolge. Für Kleidung: Marke, Art,
@@ -104,6 +136,31 @@ Titelbild nichts.
 Veröffentlichen ist erst freigegeben, wenn kein Feld mehr in den letzten beiden Zuständen
 ist. Ein vorbelegter Wert (etwa Zustand „Sehr gut") ist bis zur Bestätigung
 `needs_confirmation`, nicht `ok`.
+
+**Blocker** — der Satz, der sagt, warum ein Feld nicht `ok` ist. Jeder Blocker gehört zu
+einem Feld, das man ändern kann; eine Blocker-Zeile ohne Feld ist keine Prüfung, sondern
+eine Wand. `blockers` beantwortet „was fehlt noch" — ein bereits eingestellter Draft steht
+deshalb nicht darin, obwohl er sperrt (dafür gibt es `done`).
+
+**Auflösung** — aus einem Wort wird Vinteds ID: „Hoodie" → `catalog_id 1806`. Sie liegt
+unter dem Namen, den `resolve.js` vergibt (`catalog`, `brand`, `size`, `color`), nicht unter
+dem Feldnamen des Studios. Ein Feld ohne Auflösung hat kein Recht auf die ID der vorigen.
+
+**Kandidat** — ein Eintrag der Auswahlliste unter einem Feld. Zwei Sorten, und sie zu
+verwechseln wäre eine Falschaussage: ein **Treffer** trägt eine ID und beendet die Frage,
+ein **Schritt** trägt einen Pfad und ist die nächste Eingabe (so geht man durch Vinteds
+Kategoriebaum). `candidateKind` sagt, welche Sorte eine Liste enthält.
+
+**Gegenprobe** — vor dem Create wird Vinteds eigene Fotoerkennung befragt und mit dem
+Draft verglichen (Entscheidung C). Widerspricht sie, wird das Feld geleert und beide
+Antworten werden angeboten. **Ausnahme:** eine ausdrückliche Wahl des Nutzers steht
+(`overriddenBy` sagt dann, wen er überstimmt hat) — sonst wäre die eigene Antwort nicht
+durchsetzbar.
+
+**Attributbeutel** (`item_attributes`) — die Liste kategorieabhängiger Angaben in der
+Payload, etwa `language_book`. Er entsteht im Feldzustand, nicht in der Pipeline; und die
+Vorabprüfung „verlangt diese Kategorie etwas, das wir nicht liefern können?" hält einen
+Code nur dann für beantwortet, wenn er in genau diesem Beutel auch mitgeht.
 
 **Trockenlauf** — `draftCreateEnabled: false`: Der Draft läuft bis zur fertigen Payload,
 die ins Log geht; der Create unterbleibt. Das Gegenstück zum Testmodus beim Relist.
@@ -147,3 +204,12 @@ Neither is ever defaulted or guessed — see ADR-0005.
 
 **Colour** — the one field that IS auto-defaulted, to a neutral value, when a category
 requires one and the source has none.
+
+**ISBN** — auf jedem Buchrücken mit Bindestrichen gedruckt, von Vinted nur als Ziffernfolge
+angenommen. `normaliseIsbn` putzt sie; das ist dieselbe Nummer, nur lesbar gesetzt. Was
+danach keine ISBN ist, blockiert am Feld statt beim Create.
+
+**Buchsprache** (`language_book`) — ein Attribut, dessen IDs Vinted nirgends preisgibt.
+Jede in `book.js` stammt aus einem von Hand eingestellten Inserat. Was dort nicht steht,
+wird nicht geraten: eine falsche Sprache fällt niemandem auf, bis ein Käufer ein englisches
+Buch auspackt.

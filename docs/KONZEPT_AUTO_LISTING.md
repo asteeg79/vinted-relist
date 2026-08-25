@@ -3,7 +3,27 @@
 **Aufsetzend auf:** Vinted Relist v0.46.0
 **Status:** entschieden (14 Punkte, Grilling-Runden 1–4)
 **Datum:** 2026-08-13
-**Zugehörig:** ADR-0007, Ergänzung zu `CONTEXT.md`
+**Zugehörig:** ADR-0007, ADR-0008, Ergänzung zu `CONTEXT.md`
+
+> ## Nachtrag 2026-08-25 (v0.116.0) — was gebaut wurde und was sich geändert hat
+>
+> Dieses Konzept ist **gebaut**, in Betrieb, und an echten Artikeln gelaufen. Es bleibt
+> stehen, wie es entschieden wurde — ein Entscheidungsprotokoll, das man rückwirkend
+> glättet, verliert genau den Wert, für den es geschrieben wurde. Drei Entscheidungen hat
+> die Wirklichkeit korrigiert; sie sind unten an Ort und Stelle markiert:
+>
+> | § | Damals | Heute | Was es umgeworfen hat |
+> |---|---|---|---|
+> | 4.1 | Stufenmodell als sichtbarer Freischaltweg | Entwicklungslandkarte, nicht Oberfläche | Die Anzeige „Stufe 1" beantwortete eine Frage, die kein Nutzer hat. Sichtbar ist nur noch: scharf oder Trockenlauf. |
+> | 5.3 | **Keine** Bounding-Box vom Modell | Die Artikelbox des Modells ist der zweite Zuschnitt-Durchgang | Auf dem ersten echten Inserat standen die Füße des Fotografen. Der Abschälung sind Schuhe genauso viel Objekt wie ein Ärmel — nur wer weiß, was ein Hoodie ist, kann das trennen. |
+> | 5.4 | Das Modell prüft den fertigen Zuschnitt | Das Modell sieht **das ganze Foto** und sagt, wo der Artikel liegt | Die Abschälung warf auf einem echten Foto 74 % weg, darunter das Größenetikett. Das Modell meldete pflichtgemäß `size_label: null` — es hatte nichts zu lesen. |
+>
+> Dazu eine Entscheidung, die nicht umgeworfen, sondern **ergänzt** wurde: die Gegenprobe
+> (Entscheidung C, §6.4) brauchte einen Ausweg. Eine ausdrückliche Wahl des Nutzers steht
+> jetzt, auch wenn Vinted widerspricht — sonst wiederholt sich derselbe Einwand endlos, und
+> der Kinderpullover, den Vinted für einen Herren-Sweater hält, ließe sich nie einstellen.
+>
+> Der heutige Stand steht in `docs/TECHNISCHE_DOKUMENTATION.md` §7.2 und in `README.md`.
 
 ---
 
@@ -84,6 +104,11 @@ unit-testet. Gegenmaßnahme ist Entscheidung 9 (§4.3).
 ## 4. Architektur
 
 ### 4.1 Stufenmodell
+
+> **Überholt (v0.90.0).** Die Stufen waren eine Landkarte für die Entwicklung und sind als
+> solche aufgegangen: 1 bis 3 sind gebaut, 4 nicht. Als *Oberfläche* waren sie ein Fehler —
+> oben rechts im Studio stand „Stufe 1", während der Nutzer wissen wollte, ob sein Klick
+> ein echtes Inserat erzeugt. Genau das steht dort jetzt, und sonst nichts.
 
 | Stufe | Inhalt | Vinted-Kontakt |
 |---|---|---|
@@ -235,12 +260,44 @@ Der Fehlerfall ist bewusst asymmetrisch: im Zweifel zu viel Rand, nie ein fehlen
 
 ### 5.3 Keine Bounding-Box vom Modell
 
+> **Umgekehrt (v0.79.0).** Die Artikelbox des Modells ist heute der **zweite**
+> Zuschnitt-Durchgang, und sie schlägt die Abschälung, wo es eine gibt.
+>
+> Was dagegen sprach, stimmt weiterhin: die Koordinaten sind ungefähr. Was übersehen wurde,
+> ist, dass die Abschälung eine Annahme trifft, die schlicht falsch sein kann — *alles, was
+> nicht Hintergrund ist, IST der Artikel*. Auf dem ersten echten Inserat standen unten die
+> Füße des Fotografen im Bild. Die sind kein Hintergrund; keine Schwelle repariert das, weil
+> Schuhe aus Sicht der Pixel ein völlig ordentliches Objekt sind. Nur wer weiß, wie ein
+> Hoodie aussieht, kann sagen: *das da unten gehört nicht dazu.*
+>
+> Die Ungenauigkeit wird stattdessen eingepreist. `modelBoxVerdict` lehnt jede
+> unplausible Box ab (außerhalb, entartet, zu klein für ein brauchbares Inseratsbild, ganz
+> in der Füllung), und eine mit dem Auge gezeichnete Box bekommt einen Zuschlag von 6 % —
+> **der Box**, nicht des Bildes, weil der Fehler mit dem Gegenstand wächst und nicht mit dem
+> Foto. Wird die Box abgelehnt, steht der erste Durchgang. Die Zusage aus §5.2 bleibt
+> unberührt: die Box läuft durch dasselbe `chooseFrame`.
+>
+> Der Rest des Absatzes gilt unverändert — deshalb ist die Abschälung immer noch da, immer
+> noch deterministisch und immer noch gegen synthetische Pixelmatrizen geprüft.
+
 Vision-Modelle geben Koordinaten nur ungefähr an, und der Fehler liegt in genau der
 Größenordnung, die hier weh tut. Die Heuristik ist deterministisch, kostenlos und
 testbar — die Box-Bestimmung arbeitet auf einem Array und wird gegen synthetische
 Pixelmatrizen geprüft, ohne Canvas.
 
 ### 5.4 Das Modell als Prüfer
+
+> **Umgestellt (v0.79.0).** Das Modell bekommt nicht mehr den fertigen Zuschnitt zu sehen,
+> sondern **das ganze Foto** — und der Zuschnitt folgt aus seiner Antwort, statt ihr
+> voranzugehen.
+>
+> Der Grund ist gemessen: auf einem echten Foto behielt die Abschälung 26 % des Bildes, und
+> das Größenetikett lag in den 74 %, die sie wegwarf. Das Modell meldete daraufhin
+> pflichtgemäß `size_label: null` — es hatte nichts zu lesen. Dem Erkenner unsere eigene
+> Vermutung vorzulegen war die Reihenfolge verkehrt herum.
+>
+> Ein Call je Artikel bleibt es. Die Modellkopie ist das unbeschnittene Foto (bis 1568 px
+> Kantenlänge), die Inseratskopie entsteht daneben aus demselben Rahmen.
 
 Jedes zugeschnittene Bild wird nachgeprüft (Entscheidung 5) — **gebündelt als ein Call
 pro Artikel**, nicht einer pro Bild. Alle Fotos gehen gemeinsam rein, zurück kommt ein
@@ -658,15 +715,47 @@ Nach Schritt 4 ist das Werkzeug nützlich. Schritt 7 ist verzichtbar.
 
 ## 12. Offene Punkte — alle brauchen Messwerte, keine Entscheidung
 
-1. Pfade und Antwortformen der Taxonomie- und Preis-Endpoints sowie die Origin-Frage bei
-   lesenden Calls (Schritt 0b, drei Prüfpunkte).
-2. Schwellwerte der Objekterkennung (Farbabstand, Kantenenergie, 4 % Sicherheitsrand) —
-   an ~30 eigenen Fotos kalibrieren. Untergrund und Licht bestimmen sie stärker als jede
-   Theorie.
-3. Konfidenzgrenzen aus §6.4 — zu streng bedeutet Klickarbeit, zu locker bedeutet
-   Durchrutscher. Nur empirisch zu finden.
-4. Trefferquote der Kategorie-Erkennung bei Kleidung (vor Stufe 3).
-5. Ob Vinteds Preisspanne den Versand enthält.
-6. Ob das 100-Zeichen-Limit Zeichen oder Bytes zählt (Umlaute). Die Notbremse im Zweifel
-   gegen die Byte-Länge prüfen.
-7. Ob verwaiste Fotos aus abgebrochenen Upload-Sessions im Konto sichtbar werden (§8).
+**Stand 2026-08-25 (v0.116.0).** Vier von sieben sind gemessen; die Antworten stehen
+dahinter. Was offen geblieben ist, ist es aus demselben Grund wie am ersten Tag: es braucht
+eine Messung, keine Überlegung.
+
+1. ~~Pfade und Antwortformen der Taxonomie- und Preis-Endpoints sowie die Origin-Frage bei
+   lesenden Calls.~~ **Gemessen** (Spike 0b, 2026-08-14). Vollständig in
+   `docs/TECHNISCHE_DOKUMENTATION.md` §6. Kernbefund zur Origin-Frage: lesende Calls gehen
+   direkt aus einer Extension-Page, sofern die Header stimmen — Addendum zu ADR-0001.
+   Nachtrag: die **Sendungsgröße** läuft über einen anderen Host, verträgt keine
+   CSRF-Header (CORS-Preflight) und braucht die `upload_session_id`; sie sitzt deshalb im
+   Content-Script-Pfad und erst nach dem Upload.
+2. **Teilweise.** Die Schwellwerte sind nicht mehr fest, sondern werden aus dem Bild selbst
+   abgeleitet (Median und Streuung des Randrings), mit den Konstanten als Untergrenze — das
+   löst den Fall „Kleidungsstück auf Holzboden", der mit festen Werten unlösbar war. Der
+   Sicherheitsrand für die **Artikelbox des Modells** ist gemessen: 6 % *der Box*, nachdem
+   ein Ärmel in die Bildkante lief. Die Werte für die Abschälung sind weiterhin nicht an
+   30 Fotos kalibriert.
+3. **Offen.** Die Grenze steht bei 0,8 und ist eine Setzung geblieben. Was sich stattdessen
+   geändert hat: Konfidenz allein entscheidet nicht mehr. Ein Feld ohne Vinted-ID blockiert
+   unabhängig davon, wie sicher das Modell war (`NEEDS_ID`) — der Durchrutscher, um den es
+   in §6.4 geht, hing nicht an der Zahl, sondern daran, dass ein Name ohne ID gefüllt
+   *aussieht*.
+4. **Gemessen, mit einem anderen Ergebnis als erwartet.** Vinteds Stichwortsuche antwortet
+   auf „Sweatshirt" mit *einem* Herren-Blatt — bei einem Kinderpullover also falsch, und
+   zwar hartnäckig. Die Trefferquote war nicht das Problem, die Sackgasse war es: es gab
+   keinen Weg, die Antwort zu überstimmen. Daher `browseCatalogs` (durch den Baum gehen
+   statt raten) und `overriddenBy` (die eigene Wahl steht, auch gegen die Gegenprobe).
+5. **Offen.** Ob Vinteds Preisspanne den Versand enthält, ist nicht geprüft. Dafür ist ein
+   anderer Befund dazugekommen: die Spanne kommt nur, wenn Kategorie, Marke **und** Zustand
+   stehen — und für ganze Kategoriefamilien (Bücher, Comics, Briefmarken, Schreibwaren) gibt
+   es überhaupt keine Vergleichsverkäufe. Der leere Preis war deshalb kein Aussetzer,
+   sondern vier verschiedene, jeweils ordentliche Lagen; sie stehen jetzt als Satz unter dem
+   Feld.
+6. **Offen, und bewusst zur sicheren Seite entschieden.** Ob Vinted Zeichen oder Bytes
+   zählt, ist ungeprüft; `HARD_MAX` prüft deshalb **Bytes**. Ein etwas zu kurzer Titel ist
+   besser als ein abgelehnter Create.
+7. **Offen.** Ob verwaiste Fotos aus abgebrochenen Upload-Sessions im Konto sichtbar werden,
+   ist nie beobachtet worden — es ist auch nie ein Lauf so abgebrochen, dass es aufgefallen
+   wäre.
+
+**Neu dazugekommen, und aus demselben Holz:** Ob **432 px** die richtige Untergrenze für
+die Breite eines Inseratsbildes sind (`maxUpscale` in `crop.js`). Ein quadratisch
+umrandetes Nackenetikett bei 1 % Bildfläche fällt heute heraus und behält den weiteren
+Zuschnitt des ersten Durchgangs. Braucht ein echtes Foto zum Messen, keine Überlegung.
