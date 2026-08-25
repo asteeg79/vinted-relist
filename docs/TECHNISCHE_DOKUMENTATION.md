@@ -1067,12 +1067,42 @@ npm run coverage   # Coverage-Report
 npm run check      # validate + test
 ```
 
-**`npm run coverage`, nicht `npx c8`.** Der Skript-Weg nutzt die eingebaute Abdeckung von
+### Warum der Ordner wächst, obwohl die Extension es nicht tut
+
+Die Erweiterung wird **entpackt** geladen: Chrome zeigt in `chrome://extensions` die Größe
+des *ganzen Projektordners* an. Die Laufzeit-Dateien (`lib/`, `popup/`, `studio/`,
+`content/`, `background/`, `icons/`, `manifest.json`) sind zusammen rund **480 KB in 54
+Dateien**; alles Übrige ist Entwicklungsmaterial, das im selben Verzeichnis liegt, weil es
+laut ADR-0006 keinen Build-Schritt gibt — der Quellcode, den man bearbeitet, ist der, der
+läuft. Der Preis dafür ist genau diese Anzeige.
+
+Zweimal ist der Ordner unbemerkt angeschwollen, beide Male aus einem Grund, den man im
+Dateibaum nicht sieht:
+
+**1. `npm run coverage`, nicht `npx c8`.** Der Skript-Weg nutzt die eingebaute Abdeckung von
 `node:test` und schreibt nichts auf die Platte. `c8` legt pro Lauf V8-Rohdaten in
-`coverage/tmp/` ab und räumt sie nie weg — nach ein paar Läufen sind das 16 MB. Der Ordner
-ist zwar in `.gitignore`, aber die Erweiterung wird **entpackt** geladen: Chrome zeigt in
-`chrome://extensions` die Größe des ganzen Ordners an, und aus 2 MB werden so 18 MB.
-Aufräumen: `rm -rf coverage`.
+`coverage/tmp/` ab und räumt sie nie weg — nach ein paar Läufen sind das 16 MB, aus 2 MB
+werden 18. Dass der Ordner in `.gitignore` steht, hilft nicht: Chrome liest das
+Verzeichnis, nicht das Repository. Aufräumen: `rm -rf coverage`.
+
+**2. Gelegentlich `git gc`.** Git legt jede Version jeder geänderten Datei zunächst
+**vollständig** ab und komprimiert erst beim Packen — automatisch aber erst ab 6700 losen
+Objekten (`gc.auto`), eine Schwelle, die dieses Projekt nie erreicht. Gemessen am
+2026-08-25 nach 13 Commits:
+
+```
+vorher:   count: 420   size: 2.63 MiB   packs: 0     → .git = 2,8 MB
+git gc
+nachher:  count: 0     in-pack: 420     size-pack: 483 KiB  → .git = 632 KB
+```
+
+Faktor 5,6, und der ganze Ordner fiel von 4,1 MB auf 1,9 MB. Große Commits über viele
+Dateien treiben das schnell hoch — dieselbe Doku in fünf Fassungen liegt fünfmal ganz da.
+`git gc` verliert nichts Erreichbares; ohne Stashes und unerreichbare Objekte ist es reine
+Kompression.
+
+**Binärdateien gibt es keine zum Aufräumen.** Die drei Icons sind zusammen 2,4 KB und alle
+im Manifest referenziert. Ein `.DS_Store` von macOS taucht gelegentlich auf und darf weg.
 
 **Coverage-Strategie:** Reine + Storage-Module via In-Memory-chrome-Mock
 (`tests/helpers/chrome-mock.js`) auf ~98–100 %. Beide Pipelines laufen im Test gegen einen

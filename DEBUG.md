@@ -207,3 +207,4 @@ Nach jeder Code-Änderung:
 | HTTP 429 | Rate limit | Warten; `withRetry` fängt bis zu drei Versuche ab |
 | Popup zeigt nach dem Klick nichts | SW war inaktiv, der Erstkontakt ist langsam | Nochmal klicken; die SW-Konsole zeigt, ob er aufgewacht ist |
 | Erweiterung ist plötzlich 18 MB groß | `npx c8` hat `coverage/tmp` liegen lassen | `rm -rf coverage`, und `npm run coverage` benutzen |
+| Erweiterung ist langsam auf ein paar MB gewachsen | `.git` hat nie gepackt — lose Objekte speichern jede Dateiversion ganz | `git gc` (verliert nichts), `du -sh .` zur Kontrolle |

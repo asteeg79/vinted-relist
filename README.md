@@ -333,11 +333,32 @@ npm run validate   # nur die statischen Checks
 
 Aktuell: **868 Tests**, `lib/` bei ~99 % Line-Coverage.
 
+### Der Ordner wächst, nicht die Extension
+
+Die Erweiterung wird **entpackt** geladen: Chrome zeigt in `chrome://extensions` die Größe
+des *ganzen Projektordners* an — Tests, Doku und `.git` inklusive. Die eigentliche
+Extension sind rund 480 KB in 54 Dateien. Zweimal ist der Ordner dadurch unbemerkt
+angeschwollen, beide Male aus einem Grund, den man nicht sieht:
+
 **`npm run coverage`, nicht `npx c8`.** Der Skriptweg nutzt die eingebaute Abdeckung von
 `node:test` und schreibt nichts auf die Platte. `c8` legt pro Lauf V8-Rohdaten in
-`coverage/tmp/` ab und räumt sie nie weg — nach ein paar Läufen sind das 16 MB. Der Ordner
-ist zwar in `.gitignore`, aber die Erweiterung wird *entpackt* geladen: Chrome zeigt in
-`chrome://extensions` die Größe des ganzen Ordners an.
+`coverage/tmp/` ab und räumt sie nie weg — nach ein paar Läufen sind das 16 MB. Dass der
+Ordner in `.gitignore` steht, hilft nicht: Chrome liest das Verzeichnis, nicht das
+Repository. Aufräumen: `rm -rf coverage`.
+
+**Gelegentlich `git gc`.** Git legt jede Version jeder geänderten Datei zunächst
+**vollständig** ab und komprimiert erst beim Packen — automatisch aber erst ab 6700 losen
+Objekten, was hier nie erreicht wird. Nach 13 Commits waren es 420 lose Objekte mit
+2,6 MB; gepackt sind daraus 483 KB geworden, Faktor 5,6. Ein Aufruf nach ein paar größeren
+Commits genügt:
+
+```bash
+git gc          # verliert nichts Erreichbares; hier die einzige nötige Wartung
+du -sh .        # zur Kontrolle
+```
+
+Und `.DS_Store` löschen, wenn macOS wieder eines angelegt hat — aus demselben Grund wie
+oben: es steht in `.gitignore`, liegt aber im Ordner.
 
 Nicht unit-getestet und bewusst so: `popup/`, `studio/`, `content/` (dort wird nichts
 entschieden), sowie `image-utils.reencode` und `studio/canvas.js` (beide brauchen ein
