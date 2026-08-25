@@ -156,6 +156,20 @@ test('a category that demands an attribute we cannot fill stops the draft', asyn
   assert.equal(port.called('createItem'), false);
 });
 
+test('die Buchsprache gilt nur als beantwortet, wo sie auch mitgeschickt wird', async () => {
+  // READY_DRAFT ist ein Pullover, kein Buch: `bookLanguageAttributes` liefert dafür einen
+  // leeren Beutel. Verlangt die Kategorie trotzdem `language_book`, ist er UNBEANTWORTET —
+  // und der Draft muss stehenbleiben, solange die Fotos noch hier liegen. Vorher stand der
+  // Code auf einer festen Ausnahmeliste und wurde durchgewunken; der Fehlschlag kam dann
+  // nach dem Upload, mit `400 language_book: Wähle eine Sprache`.
+  const port = makeFakeDraftPort({
+    settings: { draftCreateEnabled: true },
+    categoryAttributes: () => [{ code: 'language_book', value_ids: [] }]
+  });
+  await assert.rejects(() => publishDraft(request(), port), /language_book/);
+  assert.equal(port.called('uploadPhoto'), false);
+});
+
 test('the attributes are asked for the resolved category, and the answer is logged', async () => {
   const port = makeFakeDraftPort();
   await publishDraft(request(), port);
@@ -238,6 +252,23 @@ test('eine unbelegte Sprache kostet keinen Upload — und sagt, welche fehlt', a
 
   await assert.rejects(() => publishDraft(request({ draft }), port), /„en"/);
   assert.equal(port.called('uploadPhoto'), false);
+});
+
+test('eine im Feld gewählte Sprache reist bis in die Payload', async () => {
+  // Der Ausweg aus der Sperre darüber: das Modell liest „en", der Nutzer sieht ein
+  // deutsches Buch und wählt es. Ohne diesen Weg blieb der Draft für immer stehen.
+  const port = makeFakeDraftPort({ suggestCategories: () => [], suggestAttributes: () => ({ brands: [], colors: [], sizes: [], isbn: null }) });
+  const base = bookDraft();
+  const draft = {
+    ...base,
+    analysis: { ...base.analysis, book_language: 'en' },
+    overrides: { ...base.overrides, language: 'de' }
+  };
+  const result = await publishDraft(request({ draft }), port);
+
+  assert.deepEqual(result.payload.item.item_attributes, [{ code: 'language_book', ids: [6437] }]);
+  const logged = port.calls.find(c => c.name === 'log' && c.args[0] === 'book_language');
+  assert.deepEqual(logged.args[1], { code: 'de', id: 6437, source: 'user' });
 });
 
 test('außerhalb der Medien bleibt der Attributbeutel leer', async () => {
@@ -451,11 +482,15 @@ test('Vinteds Feldfehler kommen als Satz an, nicht als JSON', async () => {
   await assert.rejects(() => publishDraft(request(), port), e => {
     assert.match(e.message, /language_book: Wähle eine Sprache/);
     assert.doesNotMatch(e.message, /code":99/, 'kein JSON auf dem Bildschirm');
+    // Der Pfad VOR dem Upload sagt „die Fotos sind noch nicht hochgeladen". Wer beide
+    // Meldungen kennt, liest aus dem Schweigen hier sonst dasselbe — und es stimmt nicht.
+    assert.match(e.message, /Fotos sind bereits hochgeladen/);
     return true;
   });
   const logged = port.calls.find(c => c.name === 'log' && c.args[0] === 'publish_failed');
   assert.deepEqual(logged.args[1].fields, ['language_book']);
 });
+
 
 test('a failed create leaves no history entry', async () => {
   const port = makeFakeDraftPort({

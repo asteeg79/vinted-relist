@@ -468,11 +468,26 @@ test('unfillableAttributeCodes: names what we cannot answer', () => {
   assert.deepEqual(codes, ['video_game_rating', 'video_game_platform']);
 });
 
-test('unfillableAttributeCodes: die Buchsprache zählt nicht mehr dazu', () => {
-  // Seit `lib/book.js` eine gemessene ID dafür hat, ist `language_book` gefüllt und nicht
-  // mehr unfüllbar. Ohne diesen Eintrag hielte die Prüfung genau den einen Code auf, für
-  // den es inzwischen eine Antwort gibt.
-  assert.deepEqual(unfillableAttributeCodes([{ code: 'language_book', value_ids: [] }]), []);
+test('unfillableAttributeCodes: beantwortet ist ein Code erst, wenn er auch mitgeschickt wird', () => {
+  // `language_book` stand einmal in der festen Liste — seit `lib/book.js` eine gemessene ID
+  // dafür hat. Nur füllt `book.js` ihn ausschließlich für Bücher: bei jeder anderen
+  // Warengruppe ging der Beutel leer raus, während die Prüfung den Code für beantwortet
+  // hielt und den Draft durchwinkte. Der Fehlschlag kam dann nach dem Foto-Upload.
+  const verlangt = [{ code: 'language_book', value_ids: [] }];
+
+  assert.deepEqual(
+    unfillableAttributeCodes(verlangt, [{ code: 'language_book', ids: [6437] }]), [],
+    'wird die Sprache mitgeschickt, ist nichts offen'
+  );
+  assert.deepEqual(
+    unfillableAttributeCodes(verlangt, []), ['language_book'],
+    'ein leerer Beutel beantwortet gar nichts — hier muss der Draft stehenbleiben'
+  );
+  assert.deepEqual(unfillableAttributeCodes(verlangt), ['language_book'], 'ohne Angabe ebenso');
+});
+
+test('unfillableAttributeCodes: ein mitgeschickter Code zählt unabhängig von der Schreibweise', () => {
+  assert.deepEqual(unfillableAttributeCodes([{ code: 'Language_Book' }], [{ code: 'language_book', ids: [1] }]), []);
 });
 
 test('unfillableAttributeCodes: skips what the payload already carries in its own column', () => {

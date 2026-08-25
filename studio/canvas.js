@@ -10,7 +10,7 @@
  * dry run after every change.
  */
 import {
-  objectBox, chooseFrame, targetSize, toGrayscale, scaleBox, padColor, modelBoxVerdict
+  objectBox, chooseFrame, targetSize, toGrayscale, scaleBox, padColor
 } from '../lib/crop.js';
 import { arrayBufferToBase64 } from '../lib/util.js';
 
@@ -44,11 +44,17 @@ const AI_QUALITY = 0.92;
 /**
  * Turn one picked file into a listing-ready photo.
  *
- * `options.modelBox` + `options.previousFrame` re-run the whole thing with the ARTICLE BOX
- * the recognition drew instead of the one the background peel guessed. That second pass is
- * how the photographer's shoes leave the picture: the peel cannot know they are not part
- * of the article, and the model can. Refused if the box is implausible — then the first
- * pass's result stands (see `modelBoxVerdict`).
+ * `options.box` re-draws with a FERTIG ENTSCHIEDENEN Artikelbox in Originalkoordinaten,
+ * statt sie hier zu suchen. So läuft der zweite Durchgang: die Erkennung hat die Box
+ * gezeichnet, `crop.modelBoxVerdict` hat sie geprüft und in Bildkoordinaten gebracht, und
+ * hier wird nur noch gezeichnet. Das ist es, was die Füße des Fotografen aus dem Bild
+ * bringt — die Abschälung kann nicht wissen, dass sie nicht zum Artikel gehören.
+ *
+ * WARUM DIE BOX UND NICHT IHRE ZUTATEN. Hier stand einmal `modelBox` + `previousFrame`,
+ * woraus diese Funktion das Urteil selbst bildete — ein zweites Mal, denn der Aufrufer
+ * bildet es ohnehin, um sich bei einer Absage den Decode zu sparen. Zwei Rechnungen, die
+ * übereinstimmen mussten, plus ein Zweig beim Aufrufer für den Fall, dass sie es nicht tun.
+ * Wer entscheidet, entscheidet einmal.
  *
  * Returns { url, blob, mediaType, width, height, mode, reason, touchesEdge, frame,
  * boxSource, boxReason, stats } plus, im ersten Durchgang, { modelBase64, modelUrl,
@@ -67,44 +73,50 @@ export async function prepare(file, options = {}) {
   // Vinted's CDN images are already normalised.
   const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
   try {
-    // ERST DAS URTEIL, DANN DIE ARBEIT. `modelBoxVerdict` ist reine Arithmetik; die
-    // Abschälung darunter kostet eine Verkleinerung, ein `getImageData` und einen
-    // Zeilen-/Spaltendurchlauf. Gewinnt die Modellbox, wird `heuristic` ohnehin verworfen
-    // — und seit der Prompt für JEDES Foto eine Artikelbox verlangt, ist das der Normalfall
-    // statt der Ausnahme.
-    const verdict = options.modelBox
-      ? modelBoxVerdict(options.modelBox, options.previousFrame, bitmap.width, bitmap.height)
-      : { box: null, reason: 'not_offered' };
+    // NUR WENN JEMAND SIE BRAUCHT. Die Verkleinerung ist ein `drawImage` über das volle
+    // Foto, das `getImageData` darunter ein Rückweg von der GPU — zusammen der teuerste
+    // Schritt hier neben dem Kodieren. Gebraucht werden die Pixel an genau zwei Stellen:
+    // von der Abschälung (nur ohne mitgegebene Box) und von der Füllfarbe (nur wenn gefüllt
+    // wird). Im zweiten Durchgang trifft beides in der Regel nicht zu — dort ist die Box
+    // schon entschieden, und meist wird geschnitten.
+    let small = null;
+    const analysisPixels = () => {
+      small ??= draw(bitmap, ANALYSIS_EDGE);
+      small.pixels ??= small.ctx.getImageData(0, 0, small.canvas.width, small.canvas.height).data;
+      return small.pixels;
+    };
 
-    // `pixels` braucht auch die Füllfarbe, und die wird seit der Zentrierung häufiger
-    // gebraucht als früher — deshalb hängt nur die Abschälung am Urteil, nicht das Bild.
-    const small = draw(bitmap, ANALYSIS_EDGE);
-    const pixels = small.ctx.getImageData(0, 0, small.canvas.width, small.canvas.height).data;
-
+    // Ohne mitgegebene Box sucht die Abschälung selbst. Sie ist genau so gut wie die
+    // Annahme, dass alles Nicht-Hintergrund der Artikel IST — die Füße des Fotografen sind
+    // kein Hintergrund. Deshalb der zweite Durchgang mit der Box der Erkennung.
     let found = null;
     let heuristic = null;
-    if (!verdict.box) {
-      const gray = toGrayscale(pixels, small.canvas.width, small.canvas.height);
+    if (!options.box) {
+      const gray = toGrayscale(analysisPixels(), small.canvas.width, small.canvas.height);
       found = objectBox(gray, small.canvas.width, small.canvas.height);
       heuristic = scaleBox(found, bitmap.width / small.canvas.width, bitmap.width, bitmap.height);
     }
 
-    // The model's box wins when there is a usable one — it is the only party here that
-    // knows a shoe from a sleeve. `modelBoxVerdict` refuses anything implausible,
-    // and then nothing changes.
-    const box = verdict.box || heuristic;
+    const box = options.box || heuristic;
 
     const frame = chooseFrame(box, bitmap.width, bitmap.height);
     const target = targetSize(frame.w, frame.h);
 
-    const fill = frame.mode === 'crop' ? null : padColor(pixels, small.canvas.width, small.canvas.height);
+    let fill = null;
+    if (frame.mode !== 'crop') {
+      const pixels = analysisPixels();
+      fill = padColor(pixels, small.canvas.width, small.canvas.height);
+    }
 
     // The listing copy: Vinted's size, the one that gets uploaded.
     const canvas = compose(bitmap, frame, target.w, target.h, fill);
     const blob = await toBlob(canvas, QUALITY);
 
-    // Der zweite Durchgang braucht sie nicht — siehe oben.
-    if (options.modelBox) {
+    // Der zweite Durchgang braucht sie nicht — siehe oben. `sourceWidth/Height` fehlen hier
+    // ebenfalls: sie sind mit `modelFrame` zusammen im ersten Durchgang entstanden und
+    // stehen beim Aufrufer schon; sie noch einmal zu liefern hieße, dieselben zwei Zahlen
+    // über den zweiten Weg zu schicken, damit sie sich selbst überschreiben.
+    if (options.box) {
       return {
         url: URL.createObjectURL(blob),
         blob,
@@ -115,11 +127,11 @@ export async function prepare(file, options = {}) {
         reason: frame.reason,
         touchesEdge: frame.touchesEdge,
         frame,
-        boxSource: verdict.box ? 'model' : 'heuristic',
-        boxReason: verdict.reason,
-        // `found` gibt es nur, wenn die Abschälung überhaupt lief — also wenn die Modellbox
-        // verworfen wurde. Sonst bleibt der Füllanteil als das, was hier zu sagen ist.
-        stats: { ...(found?.stats ?? {}), fillPct: Math.round((box.w * box.h * 100) / (bitmap.width * bitmap.height)) }
+        boxSource: box.source || 'given',
+        boxReason: options.boxReason ?? null,
+        // Die Abschälung lief hier gar nicht — es gibt keine `stats` von ihr. Was bleibt,
+        // ist der Füllanteil.
+        stats: { fillPct: Math.round((box.w * box.h * 100) / (bitmap.width * bitmap.height)) }
       };
     }
 
@@ -162,9 +174,17 @@ export async function prepare(file, options = {}) {
       modelFrame,
       // The listing frame. Kept for the log and for anyone wanting to know what was cut.
       frame,
-      boxSource: verdict.box ? 'model' : 'heuristic',
-      /** Why the model's box was or was not used — see `modelBoxVerdict`. */
-      boxReason: verdict.reason,
+      // DIE MASSE DES ORIGINALS, ausdrücklich. `modelBoxVerdict` klemmt und misst gegen sie,
+      // und wer sein Urteil ausserhalb noch einmal bilden will, braucht deshalb genau diese
+      // Zahlen — nicht die des Rahmens. Heute sind beide gleich, weil `modelFrame` der
+      // Identitätsrahmen ist; genau das ist die Annahme, vor der der Absatz darüber warnt.
+      // Sie hier zu liefern kostet zwei Zahlen und macht die Warnung überflüssig.
+      sourceWidth: bitmap.width,
+      sourceHeight: bitmap.height,
+      // Der erste Durchgang bekommt keine Box mitgegeben — hier hat immer die Abschälung
+      // entschieden. Die Box der Erkennung gibt es erst danach; sie kommt im zweiten.
+      boxSource: 'heuristic',
+      boxReason: 'not_offered',
       // What the model actually receives, so "hat es das Etikett überhaupt sehen können?"
       // is answerable by looking instead of by guessing. The studio offers this URL as a
       // link next to the photo; the caller revokes it with `url`.

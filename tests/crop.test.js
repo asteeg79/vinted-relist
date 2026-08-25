@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  DEFAULTS, objectBox, chooseFrame, targetSize, toGrayscale, scaleBox, padColor, boxFromModel, modelBoxVerdict
+  DEFAULTS, NO_EDGES, objectBox, chooseFrame, targetSize, toGrayscale, scaleBox, padColor,
+  boxFromModel, modelBoxVerdict
 } from '../lib/crop.js';
 
 /**
@@ -29,6 +30,20 @@ function contains(frame, box) {
     && frame.y <= box.y
     && frame.x + frame.w >= box.x + box.w
     && frame.y + frame.h >= box.y + box.h;
+}
+
+/**
+ * Steht die Box mittig im Rahmen? Auf einer Achse, auf ein Pixel genau.
+ *
+ * Die Rechnung stand viermal fast gleich da — einmal senkrecht, einmal waagerecht, und die
+ * Fehlermeldung sagte jedes Mal andere Worte für dieselbe Sache. Sie gehört neben
+ * `contains`: die beiden sind die Zusagen, die dieses Modul über einen Rahmen macht.
+ */
+function assertCentred(frame, box, achse = 'x') {
+  const [pos, len] = achse === 'x' ? ['x', 'w'] : ['y', 'h'];
+  const davor = box[pos] - frame[pos];
+  const dahinter = (frame[pos] + frame[len]) - (box[pos] + box[len]);
+  assert.ok(Math.abs(davor - dahinter) <= 1, `${achse}: ${davor} davor, ${dahinter} dahinter`);
 }
 
 // ---------- objectBox ----------
@@ -64,6 +79,22 @@ test('objectBox: object touching the image edge is flagged', () => {
   const box = objectBox(img(200, 250, { x: 0, y: 40, w: 90, h: 120 }), 200, 250);
   assert.equal(box.touchesEdge, true);
   assert.equal(box.certain, true, 'the claim is only allowed off a confident detection');
+});
+
+test('objectBox: die Kante wird seitenweise berichtet, und der Rand verwischt sie nicht', () => {
+  // Links läuft der Artikel hinaus, rechts steht er 30 px vom Rand — weniger als der
+  // Sicherheitsrand (4 % von 200 = 8 px … also hier reichlich). Nach Rand und Clamp sähen
+  // beide Seiten gleich aus, sobald der Rand über die Bildkante hinausgriffe; die Auskunft
+  // muss deshalb aus den Peel-Indizes kommen. Genau daran hing der bündig angelegte Rahmen.
+  const box = objectBox(img(200, 250, { x: 0, y: 40, w: 170, h: 120 }), 200, 250);
+  assert.deepEqual(box.edges, { top: false, right: false, bottom: false, left: true });
+  assert.equal(box.touchesEdge, true, 'touchesEdge ist das Oder über die vier Seiten');
+});
+
+test('objectBox: eine unsichere Box behauptet auf keiner Seite etwas', () => {
+  const box = objectBox(img(200, 200, { x: 1, y: 1, w: 198, h: 198 }), 200, 200);
+  assert.equal(box.certain, false);
+  assert.deepEqual(box.edges, NO_EDGES);
 });
 
 test('objectBox: an uncertain detection makes no claim about the edge', () => {
@@ -193,9 +224,7 @@ test('chooseFrame: der Artikel steht mittig — auch wenn er dafür nicht ganz i
 
   assert.equal(frame.mode, 'pad', 'zentriert passt er nicht — also wird gefüllt');
   assert.ok(contains(frame, tief));
-  const oben = tief.y - frame.y;
-  const unten = (frame.y + frame.h) - (tief.y + tief.h);
-  assert.ok(Math.abs(oben - unten) <= 1, `mittig: ${oben} über, ${unten} unter der Box`);
+  assertCentred(frame, tief, 'y');
 });
 
 test('chooseFrame: an einer Kante, an der der Artikel hinausläuft, wird geklemmt statt gefüllt', () => {
@@ -206,7 +235,10 @@ test('chooseFrame: an einer Kante, an der der Artikel hinausläuft, wird geklemm
   // schob den Rahmen ins Nichts und füllte die Lücke mit Farbe — genau dort, wo der
   // Artikel abgeschnitten war.
   const w = 3024, h = 4032;
-  const inDerEcke = { x: 0, y: 0, w: 2616, h: 3247, certain: true, touchesEdge: true };
+  const inDerEcke = {
+    x: 0, y: 0, w: 2616, h: 3247, certain: true, touchesEdge: true,
+    edges: { top: true, right: false, bottom: false, left: true }
+  };
   const frame = chooseFrame(inDerEcke, w, h);
 
   assert.equal(frame.mode, 'crop', 'oben und links gibt es nichts zu ergänzen');
@@ -215,11 +247,31 @@ test('chooseFrame: an einer Kante, an der der Artikel hinausläuft, wird geklemm
   assert.ok(contains(frame, inDerEcke));
 });
 
+test('chooseFrame: eine Box NAHE der Kante wird zentriert, nicht bündig angelegt', () => {
+  // Der Gegenfall zum Test darüber, und der Grund, warum `edges` überhaupt mitreist: nach
+  // Sicherheitsrand und Clamp steht in beiden Fällen `x: 0`. Früher las `chooseFrame` genau
+  // daraus „der Artikel läuft links hinaus" und legte den Rahmen bündig an die linke Kante
+  // — mit dem ganzen Spielraum rechts. Hier ist links nur der RAND weggeklemmt worden; der
+  // Artikel steht vollständig im Bild und gehört in die Mitte.
+  const w = 3024, h = 4032;
+  const knappDaneben = {
+    x: 0, y: 1210, w: 2945, h: 2137, certain: true, touchesEdge: false,
+    edges: NO_EDGES
+  };
+  const frame = chooseFrame(knappDaneben, w, h);
+
+  assert.ok(contains(frame, knappDaneben));
+  assertCentred(frame, knappDaneben, 'x');
+});
+
 test('chooseFrame: füllt eine Achse mittig, wenn der Artikel sie ganz ausfüllt', () => {
   // Berührt die Box beide Kanten einer Achse, gibt es dort keine Seite, die „richtiger"
   // wäre — dann liegt der Rahmen mittig auf dem Bild.
   const w = 3024, h = 4032;
-  const volleBreite = { x: 0, y: 1200, w: 3024, h: 1600, certain: true, touchesEdge: true };
+  const volleBreite = {
+    x: 0, y: 1200, w: 3024, h: 1600, certain: true, touchesEdge: true,
+    edges: { top: false, right: true, bottom: false, left: true }
+  };
   const frame = chooseFrame(volleBreite, w, h);
   assert.ok(contains(frame, volleBreite));
   assert.ok(Math.abs(frame.x - Math.round((w - frame.w) / 2)) <= 1, 'waagerecht mittig auf dem Bild');
@@ -232,9 +284,7 @@ test('chooseFrame: wo es zentriert hineinpasst, wird weiterhin geschnitten', () 
 
   assert.equal(frame.mode, 'crop', 'ohne Not wird nichts gefüllt');
   assert.ok(frame.x >= 0 && frame.y >= 0 && frame.x + frame.w <= w && frame.y + frame.h <= h);
-  const oben = mittig.y - frame.y;
-  const unten = (frame.y + frame.h) - (mittig.y + mittig.h);
-  assert.ok(Math.abs(oben - unten) <= 1, `mittig: ${oben}/${unten}`);
+  assertCentred(frame, mittig, 'y');
 });
 
 test('chooseFrame: uncertain detection always pads, even when a crop would fit', () => {
@@ -363,6 +413,15 @@ test('scaleBox: clamps to the source bounds', () => {
   assert.equal(scaled.x, 0);
   assert.equal(scaled.y, 0);
   assert.ok(scaled.x + scaled.w <= 200 && scaled.y + scaled.h <= 200);
+});
+
+test('scaleBox: die Kantenauskunft überlebt den Maßstab', () => {
+  // Die Analyse läuft auf einem verkleinerten Bild, der Zuschnitt auf dem großen. Ginge
+  // `edges` hier verloren, käme die Box maßstabsgerecht, aber ohne Gedächtnis bei
+  // `chooseFrame` an — und würde dort zentriert, obwohl links nichts mehr ist.
+  const edges = { top: false, right: false, bottom: true, left: true };
+  const scaled = scaleBox({ x: 0, y: 10, w: 50, h: 40, certain: true, touchesEdge: true, edges }, 4, 200, 200);
+  assert.deepEqual(scaled.edges, edges);
 });
 
 // ---------- boxFromModel ----------
@@ -525,6 +584,40 @@ test('modelBoxVerdict: a box entirely in the padding says so', () => {
   assert.equal(modelBoxVerdict({ x: 0, y: 0.1, w: 0.10, h: 0.8 }, narrow, IMG_W, IMG_H).reason, 'in_padding');
 });
 
+test('modelBoxVerdict: fehlende Bildmaße sind malformed, keine Box aus NaN', () => {
+  // Gegen `undefined` geklemmt wird jede Zahl NaN — und NaN verletzt keinen der Vergleiche
+  // darunter. Die Box käme durch alle Prüfungen und wäre trotzdem keine.
+  const identity = { mode: 'crop', x: 0, y: 0, w: IMG_W, h: IMG_H };
+  const n = { x: 0.1, y: 0.1, w: 0.6, h: 0.6 };
+  assert.equal(modelBoxVerdict(n, identity, undefined, IMG_H).reason, 'malformed');
+  assert.equal(modelBoxVerdict(n, identity, IMG_W, NaN).reason, 'malformed');
+  assert.equal(modelBoxVerdict(n, identity, 0, IMG_H).reason, 'malformed');
+});
+
+test('modelBoxVerdict: die Box sagt selbst, an welchen Bildrand sie stößt', () => {
+  const identity = { mode: 'crop', x: 0, y: 0, w: IMG_W, h: IMG_H };
+  // Links steht der Artikel 2 % vom Rand — der Zuschlag greift darüber hinaus und wird
+  // geklemmt. Das ist KEIN Bildrand des Artikels, und genau diese Verwechslung hat den
+  // Rahmen früher bündig links angelegt.
+  const knapp = modelBoxVerdict({ x: 0.02, y: 0.30, w: 0.90, h: 0.50 }, identity, IMG_W, IMG_H);
+  assert.equal(knapp.box.x, 0, 'der Zuschlag ist links weggeklemmt — die Zahl allein sagt nichts');
+  assert.deepEqual(knapp.box.edges, NO_EDGES);
+
+  // Und der echte Fall: die Box liegt bündig an der linken Kante.
+  const buendig = modelBoxVerdict({ x: 0, y: 0.30, w: 0.60, h: 0.50 }, identity, IMG_W, IMG_H);
+  assert.deepEqual(buendig.box.edges, { top: false, right: false, bottom: false, left: true });
+});
+
+test('chooseFrame: eine Modellbox nahe der linken Kante landet mittig', () => {
+  // Die beiden Schritte zusammen — das ist der Weg, den ein echtes Foto nimmt.
+  const identity = { mode: 'crop', x: 0, y: 0, w: 3024, h: 4032 };
+  const box = boxFromModel({ x: 0.02, y: 0.30, w: 0.90, h: 0.50 }, identity, 3024, 4032);
+  const frame = chooseFrame(box, 3024, 4032);
+
+  assert.ok(contains(frame, box));
+  assertCentred(frame, box, 'x');
+});
+
 // ---------- the identity frame: the model now sees the whole photo ----------
 
 test('boxFromModel: with the identity frame the box maps straight onto the original', () => {
@@ -569,20 +662,47 @@ test('modelBoxVerdict: ein Etikett von 1,5 % der Fläche ist ein Zuschnitt, kein
   assert.ok(v.box);
 });
 
-test('modelBoxVerdict: verworfen wird, was das Inseratsbild weichzeichnen würde', () => {
-  // Der Schaden an einem winzigen Ausschnitt ist nicht seine Größe, sondern das
-  // Hochrechnen auf 1080 px Breite. Also entscheidet das — und der Grund heißt weiterhin
-  // `too_small`, meint jetzt aber „müsste zu stark hochgerechnet werden".
+test('modelBoxVerdict: verworfen wird, was das Inseratsbild zu klein machen würde', () => {
+  // Der Schaden an einem winzigen Ausschnitt ist nicht seine Größe, sondern dass
+  // `targetSize` nie hochrechnet: aus einem schmalen Rahmen wird ein schmales Inseratsbild.
+  // Also entscheidet die Rahmenbreite — und `too_small` meint seit 0.95.0 NUR noch das.
   const w = 3024, h = 4032;
   const identity = { mode: 'crop', x: 0, y: 0, w, h };
-  const sliver = { x: 0.49, y: 0.49, w: 0.02, h: 0.02 };
-  assert.equal(modelBoxVerdict(sliver, identity, w, h).reason, 'too_small');
 
-  // Und die Grenze hängt an der Zielbreite, nicht an einem Flächenanteil: dieselbe Box in
-  // einem kleinen Bild bleibt zu klein, in einem großen wird sie brauchbar.
+  // Die Grenze hängt an der Zielbreite, nicht an einem Flächenanteil: dieselbe Box ist im
+  // kleinen Bild zu klein und im großen brauchbar.
   const tiny = { x: 0.35, y: 0.35, w: 0.12, h: 0.12 };
   assert.equal(modelBoxVerdict(tiny, { mode: 'crop', x: 0, y: 0, w: 900, h: 1200 }, 900, 1200).reason, 'too_small');
   assert.equal(modelBoxVerdict(tiny, identity, w, h).reason, 'ok');
+});
+
+test('modelBoxVerdict: „kein Ausschnitt" und „zu klein" sind zwei verschiedene Auskünfte', () => {
+  // Beide meldeten einmal `too_small`, während der Kommentar behauptete, `too_small` stehe
+  // nur noch für die Hochrechnung. Wer die Schwellen kalibriert, konnte aus dem Log dann
+  // nicht ablesen, welche er anfassen muss — `minModelBoxPct` oder `maxUpscale`.
+  const w = 3024, h = 4032;
+  const identity = { mode: 'crop', x: 0, y: 0, w, h };
+
+  // 0,04 % der Fläche: darunter ist es kein Ausschnitt mehr, unabhängig von der Bildgröße.
+  assert.equal(modelBoxVerdict({ x: 0.49, y: 0.49, w: 0.02, h: 0.02 }, identity, w, h).reason, 'not_a_box');
+  // 1 % der Fläche, quadratisch: eine ordentliche Box — der RAHMEN darum wäre nur zu schmal.
+  assert.equal(modelBoxVerdict({ x: 0.4, y: 0.4, w: 0.1, h: 0.1 }, identity, w, h).reason, 'too_small');
+});
+
+test('modelBoxVerdict: die Grenze ist eine Rahmenbreite, keine Fläche', () => {
+  // Gemessen, weil der Kommentar an `minModelBoxPct` einmal eine Fläche versprach, die die
+  // Prüfung gar nicht abfragt: der Rahmen muss `maxW / maxUpscale` = 432 px breit werden.
+  // Je nach Form der Box entspricht das sehr verschiedenen Flächenanteilen.
+  const w = 3024, h = 4032;
+  const identity = { mode: 'crop', x: 0, y: 0, w, h };
+  const reason = (nw, nh) => modelBoxVerdict({ x: 0.2, y: 0.2, w: nw, h: nh }, identity, w, h).reason;
+
+  // quadratisch: erst ab ~1,44 % der Fläche
+  assert.equal(reason(0.115, 0.115), 'too_small');
+  assert.equal(reason(0.125, 0.125), 'ok');
+  // breites Etikett 4:1: schon ab ~0,50 % — weniger Fläche, breiterer Rahmen
+  assert.equal(reason(0.15, 0.0375), 'ok');
+  assert.ok(0.15 * 0.0375 < 0.115 * 0.115, 'und das bei kleinerer Fläche als die abgelehnte quadratische');
 });
 
 test('boxFromModel: the label case — a small box low in the frame survives intact', () => {

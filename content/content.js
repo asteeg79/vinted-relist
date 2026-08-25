@@ -202,6 +202,17 @@ if (window.__vintedRelistLoaded) {
   }
 
   /**
+   * DIE EINZIGE KOPIE VON `STEP_MARKS` (lib/steps.js).
+   *
+   * Dieses Skript ist als Manifest-Content-Script geladen und darf keine Module importieren
+   * (ADR-0006) — das Popup importiert die Tabelle, hier steht sie abgeschrieben. Damit die
+   * Abschrift nicht auseinanderläuft, vergleicht `tests/steps.test.js` sie mit dem Original:
+   * deshalb ein Objekt in derselben Form und nicht drei Zweige einer Fallunterscheidung, an
+   * denen ein Test die Syntax lesen müsste statt die Daten.
+   */
+  const STEP_MARKS = { done: '✓', current: '▸', todo: '·' };
+
+  /**
    * Render/update the progress bar inside the toast, plus the phase list.
    *
    * `steps` kommt fertig aus dem Fortschritts-Datensatz (`lib/steps.js` entscheidet, der
@@ -235,7 +246,7 @@ if (window.__vintedRelistLoaded) {
       // Das Zeichen sagt die Lage auch dann, wenn jemand die Farben nicht unterscheidet.
       const mark = document.createElement('span');
       mark.className = 'vr-toast-mark';
-      mark.textContent = s.state === 'done' ? '✓' : (s.state === 'current' ? '▸' : '·');
+      mark.textContent = STEP_MARKS[s.state] || '';
       const text = document.createElement('span');
       text.textContent = s.label;
       li.append(mark, text);

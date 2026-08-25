@@ -20,18 +20,18 @@ keine gespeicherten Zugangsdaten.
 
 ## 1. Inhaltsverzeichnis
 
-1. Überblick & Designprinzipien
-2. Verzeichnis- & Modulstruktur
-3. Laufzeit-Kontexte und Kommunikation
-4. Authentifizierung (CSRF, anon_id, Cookies)
-5. Vinted-API-Referenz
-6. Die Relist-Pipeline im Detail
-7. Speicher (chrome.storage.local)
-8. Einstellungen
-9. Sicherheitsnetze
-10. Build, Validierung & Tests
-11. Bekannte Grenzen & Wartung
-12. ToS-Hinweis
+2. Überblick & Designprinzipien
+3. Verzeichnis- & Modulstruktur
+4. Laufzeit-Kontexte und Kommunikation
+5. Authentifizierung (CSRF, anon_id, Cookies)
+6. Vinted-API-Referenz
+7. Die Pipelines im Detail (Relist + Auto-Listing)
+8. Speicher (chrome.storage.local)
+9. Einstellungen
+10. Sicherheitsnetze
+11. Build, Validierung & Tests
+12. Bekannte Grenzen & Wartung
+13. ToS-Hinweis
 
 ---
 
@@ -40,10 +40,24 @@ keine gespeicherten Zugangsdaten.
 - **Manifest V3**, Service Worker als ES-Modul.
 - **Modulare Architektur:** reine Logik (testbar) ist von chrome.*-I/O getrennt; der
   Service Worker ist nur ein dünner Message-Router.
+- **Entscheidungen in `lib/`, Oberflächen rendern nur.** Popup, Studio und Content-Script
+  enthalten keine Regel, die man nicht in einem Test festhalten könnte — sie zeichnen, was
+  `lib/` ihnen sagt. Deshalb sind `popup/`, `studio/` und `content/` bewusst **nicht**
+  unit-getestet: was dort noch entschieden würde, gehört eine Ebene tiefer.
+- **Port/Adapter:** Beide Pipelines laufen gegen eine Schnittstelle (`relist-port.js`,
+  `draft-port.js`) — live gegen `live-port.js` / `live-draft-port.js`, im Test gegen einen
+  Fake. `missingMembers()` vergleicht dabei auch die **Stelligkeit**, damit ein Adapter mit
+  vergessenem Parameter im Test auffällt und nicht erst am echten Artikel. Deshalb
+  deklarieren die Adapter ihre Parameter vollständig, ohne Defaults und ohne Rest.
 - **create-then-delete:** Der neue Artikel wird immer zuerst erstellt (und optional
   verifiziert), das Original erst danach gelöscht.
 - **Origin-Treue:** State-changing API-Calls laufen im Page-Kontext eines echten
-  Vinted-Tabs (Content-Script), damit Vintends CSRF-/Origin-Prüfung sie akzeptiert.
+  Vinted-Tabs (Content-Script), damit Vintends CSRF-/Origin-Prüfung sie akzeptiert
+  ([ADR-0001](./adr/0001-route-api-calls-through-the-content-script.md)); **lesende** Calls
+  gehen laut Addendum auch direkt aus einer Extension-Page, sofern die Header stimmen.
+- **Keine geratene ID** ([ADR-0005](./adr/0005-never-guess-condition-or-size.md)): Wo eine Kategorie-,
+  Größen- oder Farb-ID nicht gemessen werden kann, steht `null` und der Lauf hält an. Eine
+  plausible falsche ID fällt niemandem auf, bis der Käufer auspackt.
 - **Anti-Bot-Hygiene:** sequentielle Calls mit Jitter, Foto-Re-Encoding gegen
   Duplikat-Erkennung, Cooldown-Warnungen.
 
@@ -57,47 +71,112 @@ vinted_extention/
 ├── background/
 │   └── service-worker.js      Dünner Koordinator: webRequest-Snooper + Message-Router
 ├── content/
+│   ├── page-call.js           fetch im Page-Kontext (ADR-0001), klassisches Skript
+│   ├── card-policy.js         wo in der Wardrobe ein Relist-Button hin darf
 │   ├── content.js             (1) API-Proxy  (2) Wardrobe-Enhancer (Relist-Button+Toast)
-│   └── inject.css             Styles für injizierte UI (vr-* Klassen)
+│   ├── inject.css             Struktur der injizierten UI (vr-* Klassen)
+│   └── klar.css               Theme-Layer „Klar" — additiv, NACH inject.css geladen
 ├── popup/
-│   ├── popup.html/.css/.js    Popup-UI: URL, Warnungen, Progress, Verlauf, Settings
+│   ├── popup.html/.css/.js    Popup-UI: URL, Warnungen, Fortschritt, Verlauf, Settings
+│   └── klar.css               derselbe Theme-Layer für das Popup
+├── studio/                    Auto-Listing-Oberfläche (ADR-0007), eigener Tab
+│   ├── studio.html/.css/.js   Fotos → Zuschnitt → Erkennung → Felder → Veröffentlichen
+│   ├── canvas.js              Zuschnitt im DOM-Canvas (Listing-Bild + Modell-Kopie)
+│   └── klar.css               derselbe Theme-Layer fürs Studio
 ├── lib/                       Geschäftslogik (ES-Module)
 │   ├── domains.js             Vinted-Hostliste + Match-Patterns + isVintedHost()
 │   ├── util.js                sleep, jitter, uuidV4, arrayBufferToBase64
-│   ├── errors.js              AuthError, ApiError, RateLimitError, ValidationError
-│   ├── item.js                parseUrl, buildItemUploadPayload, extractInterest, …
+│   ├── errors.js              AuthError, ApiError, RateLimitError, ValidationError, …
+│   ├── item.js                parseUrl, buildItemUploadPayload, Validierungsfehler lesen
 │   ├── settings.js            DEFAULT_SETTINGS, get/save/reset
-│   ├── history.js             Relist-Verlauf + getCounts (1h/24h)
+│   ├── history.js             Verlauf + getCounts (1 h / 24 h)
 │   ├── progress.js            setProgress/clearProgress (storage)
+│   ├── steps.js               Phasenlisten beider Pipelines + stepsAt()
 │   ├── logger.js              log/clearLog (500-Zeilen Ring-Buffer)
+│   ├── gates.js               Gates & Meldungstexte für BEIDE Oberflächen
+│   ├── confirmation.js        Erst-Bestätigung (Löschen / erstes Anlegen)
 │   ├── auth.js                Token-Snooping, CSRF-Scrape, Sessions, ensureAuth
-│   ├── page-api.js            API-Calls via Content-Script (fetch/upload/create/delete)
-│   ├── image-utils.js         fetchAsBlob, reencode (OffscreenCanvas)
+│   ├── vinted-read.js         lesender fetch aus einer Extension-Page (+ 401-Behandlung)
+│   ├── page-api.js            schreibende API-Calls via Content-Script
+│   ├── image-utils.js         fetchAsBlob, base64ToBlob, reencode (OffscreenCanvas)
 │   ├── retry.js               withRetry (Backoff für 429/5xx)
-│   └── relist.js              Pipeline-Orchestrierung: relist() + preflight()
+│   ├── write-lock.js          nur EIN Schreiblauf gleichzeitig
+│   ├── relist-port.js         Schnittstelle der Relist-Pipeline (+ Stelligkeitsprüfung)
+│   ├── live-port.js           Live-Adapter dazu
+│   ├── relist.js              Relist-Pipeline: relist() + preflight()
+│   │
+│   ├── ai.js                  Anthropic-Call: Foto → erkannte Felder (Tool-Schema)
+│   ├── secret.js              API-Key verschlüsselt ablegen/entsperren
+│   ├── crop.js                Artikelbox, Rahmenwahl, Zuschnitt-Urteil (rein)
+│   ├── taxonomy.js            Kategorien/Größen/Preisvorschlag, gecacht
+│   ├── lookup.js              Erkanntes → Vinted-IDs auflösen
+│   ├── resolve.js             Auflösung, Nutzerwahl, Gegenprobe (Entscheidung C)
+│   ├── condition.js           Zustandsvokabular + status_id (eine Heimat)
+│   ├── book.js                gemessene `language_book`-IDs (Medien-Profil)
+│   ├── title.js               Titel bauen, Profile, Pflichtfelder
+│   ├── price.js               Preisfindung + Untergrenze
+│   ├── price-memory.js        gemerkte Preise je Kategorie
+│   ├── draft-view.js          der Feldzustand: ok / needs_confirmation / missing
+│   ├── draft-port.js          Schnittstelle der Publish-Pipeline
+│   ├── live-draft-port.js     Live-Adapter dazu
+│   └── draft.js               Publish-Pipeline: publishDraft()
 ├── scripts/
-│   └── validate.mjs           Manifest-/Syntax-/ESM-Import-Checks
-├── tests/                     node:test Suite (+ chrome-mock Helper)
-└── docs/                      diese Doku + Ablaufdiagramm
+│   ├── validate.mjs           Manifest-/Syntax-/ESM-Import-Checks
+│   ├── capture-vinted.js      Messhilfe: echte SPA-Calls mitschneiden
+│   └── smoke-ai.mjs           ein echter Anthropic-Call gegen ein Foto
+├── tests/                     node:test Suite (+ chrome-mock/Fake-Port Helper)
+└── docs/                      diese Doku, Ablaufdiagramm, Konzept, ADRs
 ```
 
 ### Modul-Verantwortlichkeiten (Kurzreferenz)
 
+**Gemeinsam genutzt**
+
 | Modul | Exporte (Auswahl) | Zweck |
 |---|---|---|
-| `domains.js` | `VINTED_HOSTS`, `tabMatchPatterns`, `apiMatchPatterns`, `isVintedHost` | Single Source of Truth für Domains |
-| `util.js` | `sleep`, `jitter`, `uuidV4`, `arrayBufferToBase64` | Reine Helfer |
-| `errors.js` | `AuthError`, `ApiError`, `RateLimitError`, `ValidationError` | Typisierte Fehler für Branching |
-| `item.js` | `parseUrl`, `buildItemUploadPayload`, `extractInterest`, `pickPhotoUrl`, `photoOrientation` | Reine Daten-Transformationen |
-| `settings.js` | `DEFAULT_SETTINGS`, `getSettings`, `saveSettings`, `resetSettings` | Persistente Einstellungen |
+| `domains.js` | `VINTED_HOSTS`, `tabMatchPatterns`, `apiMatchPatterns`, `apiHostFor`, `isVintedHost` | Single Source of Truth für Domains |
+| `util.js` | `sleep`, `jitter`, `uuidV4`, `arrayBufferToBase64`, `base64ToBytes` | Reine Helfer |
+| `errors.js` | `AuthError`, `ApiError`, `RateLimitError`, `NetworkError`, `BusyError`, `ValidationError` | Typisierte Fehler für Branching |
+| `item.js` | `parseUrl`, `buildItemUploadPayload`, `buildNewItemPayload`, `extractInterest`, `validationErrorsOf`, `describeValidationErrors` | Reine Daten-Transformationen |
+| `settings.js` | `DEFAULT_SETTINGS`, `SETTINGS_KEY`, `getSettings`, `saveSettings`, `resetSettings` | Persistente Einstellungen |
 | `history.js` | `getHistory`, `addEntry`, `clearHistory`, `getCounts` | Verlauf + Cooldown-Zähler |
-| `progress.js` | `setProgress`, `clearProgress` | Fortschritt publizieren |
-| `logger.js` | `log`, `clearLog` | Diagnose-Log |
-| `auth.js` | `extractTokensFromHeaders`, `extractCsrfFromHtml`, `saveLiveTokens`, `getLiveTokens`, `saveSession`, `getSession`, `readCookies`, `fetchCsrfFromHtml`, `ensureAuth` | Auth-Beschaffung |
-| `page-api.js` | `fetchItemViaPage`, `uploadPhotoViaPage`, `createItemViaPage`, `deleteItemViaPage` | API über Content-Script |
-| `image-utils.js` | `fetchAsBlob`, `reencode` | Foto-Download + Re-Encoding |
+| `progress.js` | `PROGRESS_KEY`, `setProgress`, `clearProgress` | Fortschritt publizieren |
+| `steps.js` | `RELIST_STEPS`, `DRAFT_STEPS`, `stepsAt` | Phasen: was war, was kommt |
+| `gates.js` | `gatesFor`, `draftGatesFor`, `describeOutcome`, `describeDraftOutcome`, `describeFailure` | Warnungen & Ergebnistexte — eine Heimat für beide UIs |
+| `confirmation.js` | `hasConfirmedDelete/Create`, `setConfirmedDelete/Create` | Einmalige Erst-Bestätigung |
+| `logger.js` | `log`, `clearLog` | Diagnose-Log — `log` **wirft nie** (siehe §10) |
+| `auth.js` | `extractTokensFromHeaders`, `saveLiveTokens`, `saveSession`, `readCookies`, `fetchCsrfFromHtml`, `ensureAuth` | Auth-Beschaffung |
+| `vinted-read.js` | `readHeaders`, `createVintedFetch`, `SESSION_EXPIRED` | Lesende Calls + abgelaufene Sitzung |
+| `page-api.js` | `fetchItemViaPage`, `uploadPhotoViaPage`, `createItemViaPage`, `deleteItemViaPage`, `suggest*ViaPage` | Schreibende API über Content-Script |
+| `image-utils.js` | `fetchAsBlob`, `base64ToBlob`, `reencode` | Foto-Download, -Dekodierung, Re-Encoding |
 | `retry.js` | `withRetry` | Wiederholung bei 429/5xx |
+| `write-lock.js` | `withWriteLock`, `currentWriter` | Ein Schreiblauf zur Zeit |
+
+**Relist-Pipeline**
+
+| Modul | Exporte (Auswahl) | Zweck |
+|---|---|---|
+| `relist-port.js` | `PORT_MEMBERS`, `missingMembers` | Schnittstelle + Stelligkeitsprüfung |
+| `live-port.js` | `livePort` | Live-Verdrahtung (reine Weiterleitung) |
 | `relist.js` | `relist`, `preflight` | Pipeline |
+
+**Auto-Listing (ADR-0007)**
+
+| Modul | Exporte (Auswahl) | Zweck |
+|---|---|---|
+| `ai.js` | `buildAnalysisRequest`, `parseAnalysis`, `analyse` | Der KI-Call und sein Tool-Schema |
+| `secret.js` | `storeKey`, `unlockKey`, `cacheKey`, `describeKeyState` | API-Key verschlüsselt halten |
+| `crop.js` | `objectBox`, `chooseFrame`, `boxFromModel`, `modelBoxVerdict`, `scaleBox` | Zuschnitt-Rechnung (rein) |
+| `taxonomy.js` | `browseCatalogs`, `findCatalog`, `sizesFromGroups`, `parsePriceSuggestion`, `createTaxonomy` | Vinteds Kataloge, gecacht |
+| `lookup.js` | `lookupDraft`, `applySuggestions` | Erkanntes → IDs |
+| `resolve.js` | `resolveField`, `validatePick`, `crossCheck` | Auflösung, Nutzerwahl, Gegenprobe |
+| `condition.js` | `CONDITIONS`, `conditionIdFor`, `conditionTitleFor`, `chooseCondition` | Zustand: ein Vokabular |
+| `book.js` | `BOOK_LANGUAGES`, `BOOK_LANGUAGE_OPTIONS`, `chooseBookLanguage`, `bookLanguageAttributes`, `normaliseIsbn` | Gemessene Buchsprachen + die ISBN-Form |
+| `title.js` | `profileFor`, `buildTitle`, `missingRequired` | Titel + Profil-Pflichtfelder |
+| `price.js` / `price-memory.js` | `priceForDraft`, `recallPrice`, `savePrice` | Preis finden und merken |
+| `draft-view.js` | `draftView`, `conflictedFields`, `FIELD_*` | Der Feldzustand — was blockiert und warum |
+| `draft-port.js` / `live-draft-port.js` | `missingMembers`, `liveDraftPort` | Schnittstelle + Live-Verdrahtung |
+| `draft.js` | `publishDraft` | Pipeline |
 
 ---
 
@@ -117,17 +196,74 @@ Vier isolierte JS-Kontexte:
    entschlüsselte API-Key auch nicht. Vinted-Calls laufen unverändert nur über das
    Content-Script (ADR-0001).
 
+Das Content-Script ist ein **klassisches** Skript und kann keine Module importieren
+([ADR-0006](./adr/0006-content-scripts-are-classic-scripts.md)) — alles, was es braucht,
+muss ihm zugereicht werden. Das prägt zwei Entwürfe weiter unten (Fortschritt und Theme).
+
 **Message-Protokoll** (`chrome.runtime.onMessage`):
 
 | Typ | Von → Nach | Payload | Antwort |
 |---|---|---|---|
-| `session/update` | Content → SW | `{domain, csrf, anonId, vUdt, vUid}` | `{ok}` |
-| `relist/preflight` | Popup/Content → SW | `{url}` | `{ok, title, photoCount, interest, counts}` |
-| `relist/run` | Popup/Content → SW | `{url}` | `{ok, ...result}` |
+| `relist/preflight` | Popup/Content → SW | `{url}` | `{ok, title, photoCount, interest, counts, gates, steps}` |
+| `relist/run` | Popup/Content → SW | `{url}` | `{ok, ...result, message}` |
+| `relist/confirmed` | Popup/Content → SW | `{}` | `{ok}` |
+| `draft/gates` | Studio → SW | `{}` | `{ok, gates}` |
+| `draft/publish` | Studio → SW | `{request}` | `{ok, ...result, message}` |
+| `draft/confirmed` | Studio → SW | `{}` | `{ok}` |
 | `api/call` | SW → Content | `{method, path, headers, json?\|multipart?}` | `{ok, status, contentType, body}` |
 
+Beide UIs rendern die `gates` und die `message`, die der Router liefert, statt selbst zu
+formulieren — siehe `lib/gates.js`.
+
+### Fortschritt: eine Zahl, ein Satz, und die Phasenliste
+
 Fortschritt fließt **nicht** per Message, sondern über `chrome.storage.local.progress`
-(Publish/Subscribe): Popup und Toast hören via `chrome.storage.onChanged`.
+(Publish/Subscribe): Popup und Toast hören via `chrome.storage.onChanged`. Der Datensatz
+ist `{pct, step, steps, ts}`.
+
+`steps` ist die Phasenliste aus `lib/steps.js` — was erledigt ist (`done`), was gerade
+läuft (`current`), was noch aussteht (`todo`). Drei Entscheidungen dahinter:
+
+- **Die Prozente reichen als Quelle.** Jede Phase meldet ohnehin an einer festen,
+  aufsteigenden Marke an; aus `pct` allein lässt sich die Phase ableiten. Kein zweiter Wert
+  durch die Pipelines, keine breitere Port-Schnittstelle — `publishProgress(pct, label)`
+  behält seine zwei Parameter.
+- **Erledigt ist eine Phase erst, wenn die NÄCHSTE begonnen hat.** Sonst stünde die
+  laufende als abgehakt da, während sie arbeitet. Bei 100 % ist alles erledigt.
+- **Die Liste reist im Datensatz mit.** Der *Adapter* wählt die **Tabelle**
+  (`live-port.js` → `RELIST_STEPS`, `live-draft-port.js` → `DRAFT_STEPS`) — er ist die eine
+  Stelle, die weiß, welche Pipeline läuft. Ausgerechnet wird die Liste in `setProgress`,
+  **aus derselben gerundeten Zahl, die auch gespeichert wird**: vorher bekam `stepsAt` das
+  ungerundete `pct`, und bei 74,6 stand `pct: 75` im Datensatz — genau auf der Marke der
+  nächsten Phase —, während die Liste noch die vorige als laufend führte. Die Oberflächen
+  zeichnen nur. Das ist nicht Bequemlichkeit, sondern ADR-0006: das Content-Script könnte
+  `steps.js` gar nicht importieren, eine handgepflegte Kopie der Marken dort würde niemand
+  prüfen. Damit die Liste schon vor der ersten Fortschrittsmeldung dasteht, liefert
+  `relist/preflight` sie mit.
+
+Das Zeichen (`✓` `▸` `·`) trägt die Aussage auch ohne Farbunterscheidung. Es steht als
+`STEP_MARKS` in `lib/steps.js`, weil es eine Aussage über den Zustand ist und keine Frage
+des Aussehens — „erledigt" sieht in beiden Fenstern gleich aus, oder es ist ein Fehler. Das
+Popup importiert die Tabelle; das Content-Script kann das nicht und hält die einzige Kopie,
+die ein Test in `tests/steps.test.js` gegen die Tabelle vergleicht.
+
+### Die Oberflächen: ein additiver Theme-Layer
+
+Alle drei Oberflächen tragen dieselbe Richtung („Klar"), und zwar als **zusätzliches**
+Blatt: `content/klar.css`, `popup/klar.css`, `studio/klar.css` werden jeweils NACH dem
+Basis-Stylesheet geladen und überschreiben nur Erscheinung, keine Struktur. Keine Zeile in
+`inject.css`/`popup.css`/`studio.css` wurde dafür geändert; zum Zurückrollen genügt es, das
+Blatt zu entfernen (beim Content-Script: den Eintrag in `manifest.json` →
+`content_scripts[0].css`).
+
+Die Richtung in drei Regeln: weiße Flächen ohne Radien; Teal als Kopfband und **die eine**
+primäre Aktion; Status als 3-px-Kante links plus getönte Fläche. Rot bleibt Fehlern
+vorbehalten — der Bestätigen-Knopf vor dem Löschen ist **Tinte**, weil unumkehrbar nicht
+dasselbe ist wie „etwas ist schiefgegangen".
+
+Eine Einschränkung gilt nur für `content/klar.css`: es liegt in einer **fremden** Seite.
+Jede Regel ist deshalb auf `.vr-*` verankert und `:root` bleibt unangetastet — Vinteds
+eigene Variablen gehören Vinted.
 
 ---
 
@@ -577,10 +713,20 @@ folgt aus seiner Antwort, nicht umgekehrt.
    kosten, um die es geht.
 
 `crop.modelBoxVerdict` entscheidet, ob eine Box benutzbar ist, und sagt warum nicht:
-`malformed`, `outside`, `too_small`, `in_padding` — oder `full_frame`, was **kein**
-Einwand ist, sondern „der Artikel füllt das Bild ohnehin". Die Garantie aus §5.2 bleibt
-unberührt: die Box läuft durch dasselbe `chooseFrame` wie vorher, und ein Crop-Rahmen, der
-ins Objekt schneiden würde, wird weiterhin zu einem Pad.
+`malformed`, `outside`, `not_a_box`, `too_small`, `in_padding` — oder `full_frame`, was
+**kein** Einwand ist, sondern „der Artikel füllt das Bild ohnehin". Die Garantie aus §5.2
+bleibt unberührt: die Box läuft durch dasselbe `chooseFrame` wie vorher, und ein
+Crop-Rahmen, der ins Objekt schneiden würde, wird weiterhin zu einem Pad.
+
+**Was in der Praxis entscheidet, ist `too_small` — und es fragt nach Pixeln, nicht nach
+Fläche.** `targetSize` rechnet nie hoch, ein schmaler Rahmen ergibt also ein schmales
+Inseratsbild. Der Rahmen muss deshalb mindestens `maxW / maxUpscale` = **432 px** breit
+werden. Gemessen an einem 3024×4032-Foto entspricht das je nach Form der Box sehr
+verschiedenen Flächenanteilen — quadratisch 1,44 %, ein breites Etikett (4:1) schon
+0,50 %. Die Flächengrenze `minModelBoxPct` (0,5 %) greift dadurch fast nie; sie hat mit
+`not_a_box` einen eigenen Grund, damit im Log ablesbar bleibt, welche Schwelle gegriffen
+hat. Ob 432 px die richtige Untergrenze sind, ist **nicht gemessen** — `maxUpscale` ist die
+Stellschraube.
 
 **Nachtrag 2026-08-23 — die Box gehört auf jedes Foto, nicht nur auf gestörte (v0.109.0).**
 
@@ -746,20 +892,23 @@ Konsequenzen:
 
 ---
 
-## 7. Die Relist-Pipeline im Detail
+## 7. Die Pipelines im Detail
+
+### 7.1 Relist
 
 Siehe [Ablaufdiagramm §2](./ABLAUFDIAGRAMM.md#2-relist-pipeline-hauptablauf). Phasen &
-Fortschritt:
+Fortschritt — die Spalte „Marke" ist der Wert aus `RELIST_STEPS`, ab dem die Oberfläche
+diese Phase als laufend zeigt:
 
-| % | Phase | Funktion |
-|---|---|---|
-| 2 | Auth prüfen | `ensureAuth` |
-| 10 | Artikel laden | `fetchItemViaPage` |
-| 20–75 | Fotos: download → reencode → upload | `fetchAsBlob`, `reencode`, `uploadPhotoViaPage` |
-| 80 | Artikel erstellen | `createItemViaPage` |
-| 88 | Verifizieren (Backoff 1.5/2.5/4/5.5 s) | `verifyCreated` |
-| 92 | Original löschen | `deleteItemViaPage` |
-| 100 | Verlauf schreiben | `addEntry` |
+| Marke | % | Phase | Funktion |
+|---|---|---|---|
+| 0 | 2 | Anmeldung prüfen | `ensureAuth` |
+| 10 | 10 | Artikeldaten laden | `fetchItemViaPage` |
+| 20 | 20–75 | Fotos: download → reencode → upload | `fetchAsBlob`, `reencode`, `uploadPhotoViaPage` |
+| 75 | 80 | Neuen Artikel erstellen | `createItemViaPage` |
+| 88 | 88 | Neuen Artikel prüfen (Backoff 1.5/2.5/4/5.5 s) | `verifyCreated` |
+| 92 | 92 | Original löschen | `deleteItemViaPage` |
+| — | 100 | Verlauf schreiben | `addEntry` |
 
 **Rückgabeformen** von `relist()`:
 - `{oldId, newId, newUrl}` — Erfolg (Original gelöscht).
@@ -767,6 +916,31 @@ Fortschritt:
 - `{partial, oldId, newId, newUrl, warning}` — Klon erstellt, Original **nicht** gelöscht
   (Verifikation/Owner/Löschen fehlgeschlagen).
 - *throw* — harter Fehler vor Erstellung (Original unberührt).
+
+### 7.2 Auto-Listing (Publish-Hälfte)
+
+Die Vorbereitung — Zuschnitt, Erkennung, Auflösung — läuft komplett im Studio und erreicht
+den Worker nie; das hält ihn von der 30-Sekunden-Grenze frei. Über die Naht geht nur die
+schreibende Hälfte: ein Call, eine Antwort (`draft/publish` → `publishDraft`).
+
+| Marke | % | Phase | Funktion |
+|---|---|---|---|
+| 0 | — | Kategorie prüfen (Feldzustand, Schreib-Schloss) | `draftView`, `withWriteLock` |
+| 15 | 15–70 | Fotos hochladen (eine `uploadSessionId`, 400 ms Pause) | `uploadPhotoViaPage` |
+| 70 | 70 | Gegenprobe bei Vinted (Entscheidung C) | `crossCheck` |
+| 80 | 80 | Inserat bauen (+ Paketgröße erfragen) | `buildNewItemPayload`, `suggestPackageSizeViaPage` |
+| 90 | 90 | Inserat einstellen | `createItemViaPage` |
+| — | 100 | Fertig — oder „Testlauf, nichts gesendet" | `addEntry` |
+
+`tests/steps.test.js` pinnt `DRAFT_STEPS` an genau diese Marken: laufen Pipeline und
+Phasenliste auseinander, fällt es im Test auf und nicht erst im Toast.
+
+**Rückgabeformen** von `publishDraft()`:
+- `{itemId, url}` — Erfolg.
+- `{dryRun, payload}` — `draftCreateEnabled: false`, nichts gesendet.
+- `{conflict, resolved, blockers, title}` — Vinteds eigene Erkennung widerspricht. **Kein
+  throw**: die Entscheidung gehört dem Nutzer, und dafür braucht die Oberfläche beide
+  Antworten.
 
 ---
 
@@ -778,13 +952,22 @@ Fortschritt:
 | `sessions` | `{ [domain]: {csrf, anonId, vUdt, vUid, ts} }` | auth.js |
 | `settings` | siehe §9 | settings.js |
 | `relistHistory` | `[{ts, oldId, newId, title, domain, testMode}]` (≤100) | history.js |
-| `progress` | `{pct, step, ts}` | progress.js |
+| `progress` | `{pct, step, steps, ts}` — `steps` ist die Phasenliste, siehe §4 | progress.js, steps.js |
 | `log` | `string[]` (≤500) | logger.js |
-| `confirmedDelete` | `boolean` | popup/content |
+| `confirmedDelete` | `boolean` — erstes Löschen bestätigt | confirmation.js |
+| `confirmedCreate` | `boolean` — erstes echtes Anlegen bestätigt | confirmation.js |
+| `taxonomy` | Kategorie-/Größen-Cache mit TTL | taxonomy.js |
+| `priceMemory` | gemerkte Preise je Kategorie | price-memory.js |
+| `anthropicKey` | verschlüsselter API-Key (nie im Klartext) | secret.js |
+
+Dazu **`chrome.storage.session`**: `anthropicKeyPlain` — der entsperrte Key, nur für die
+Dauer der Browser-Sitzung, nie auf der Platte.
 
 ---
 
 ## 9. Einstellungen
+
+**Relist**
 
 | Key | Default | Wirkung |
 |---|---|---|
@@ -794,6 +977,19 @@ Fortschritt:
 | `cooldownWarnPer24h` | `30` | Soft-Warnung ab N Relists/24 h |
 | `interestWarn` | `true` | Warnung bei Favoriten/Aufrufen/Gesprächen |
 | `verifyAfterCreate` | `true` | Klon vor dem Löschen re-fetchen |
+| `defaultColorId` | `15` | Rückfallfarbe („Bunt"), wenn die Kategorie eine Farbe verlangt und das Original keine hat |
+
+**Auto-Listing (ADR-0007)**
+
+| Key | Default | Wirkung |
+|---|---|---|
+| `draftCreateEnabled` | `false` | **Trockenlauf** ist der Default: Payload bauen, loggen, nichts senden |
+| `draftLanguage` | `'de'` | Sprache der Texte — feste Wahl, nicht aus der Domain abgeleitet |
+| `draftConditionDefault` | `'very_good'` | Vorauswahl des Zustands — eine Cursorposition, keine Aussage: gilt bis zur Bestätigung als offen |
+| `draftMinPrice` | `0` (aus) | Untergrenze gegen eine falsche Kategorie mit falschem Preisband |
+| `draftConfidenceThreshold` | `0.8` | Darunter blockiert ein Feld, bis es bestätigt wird |
+| `draftDescriptionTemplate` | s. `settings.js` | Die Beschreibung wird **gefüllt**, nicht erfunden — ohne Maße, ohne Zustandsprosa |
+| `cropCheckMode` | `'all'` | Jedes zugeschnittene Foto vom Modell gegenprüfen (`'uncertain'` = nur die unsicheren) |
 
 ---
 
@@ -807,7 +1003,43 @@ Fortschritt:
 - **Interest-Warnung** vor Verlust von Likes/Views/Gesprächen.
 - **Datadome/Cloudflare-Erkennung**: Block-Antworten werden als verständliche Meldung
   ("aus- und wieder einloggen") statt als HTML-Müll gezeigt.
+- **`logger.log` wirft nie.** Es steht an über dreißig Stellen, mehrere davon in
+  `catch`-Blöcken, deren einzige Aufgabe es ist, Vinteds feldweise Auskunft zu retten. Ein
+  `await` auf eine abgelehnte Log-Zeile würde dort **aus dem catch heraus** werfen, und beim
+  Nutzer käme ein Speicherfehler an statt „isbn: Bitte gib eine ISBN an". Der Preis ist
+  ausgesprochen: ein kaputtes Log schweigt (die Konsole bekommt die Zeile trotzdem).
 - **Foto-Re-Encoding** mit Qualitäts-Jitter gegen Duplikat-Hashing.
+
+Für das Auto-Listing kommen dazu:
+
+- **Trockenlauf als Default** (`draftCreateEnabled: false`) — scharf geschaltet wird von
+  Hand, und beide Oberflächen sagen jederzeit, welcher Modus gilt.
+- **Feldzustand statt Optimismus** (`draft-view.js`): jedes Feld ist `ok`,
+  `needs_confirmation` oder `missing`; veröffentlicht werden kann erst, wenn nichts mehr in
+  den letzten beiden steht. Was das Modell unsicher erkannt hat, blockiert. **Jede Sperre
+  hängt an einem Feld** — eine Blocker-Zeile ohne Feld, das man ändern kann, ist keine
+  Prüfung, sondern eine Wand (so geschehen mit der Buchsprache).
+- **Was mitgeschickt wird, gilt als beantwortet — mehr nicht** (`unfillableAttributeCodes`):
+  die Vorab-Prüfung der Kategorie-Attribute bekommt den Beutel übergeben, den dieser Lauf
+  tatsächlich sendet. Eine feste Ausnahmeliste hatte `language_book` pauschal als erledigt
+  geführt, obwohl ihn nur Bücher füllen.
+- **Die Form wird geputzt, der Inhalt nicht erraten** (`book.js#normaliseIsbn`): eine ISBN
+  steht auf jedem Buchrücken mit Bindestrichen und wird auch so abgetippt — das ist dieselbe
+  Nummer, also gehört sie normalisiert, nicht abgelehnt. Was danach keine ISBN ist, blockt
+  am Feld statt bei `createItem` nach dem Upload.
+- **Ein unaufgelöstes Wort verwirft die vorige Auflösung** (`draft-view.js`): ein getipptes
+  Wort, das das Nachschlagen nie hervorgebracht hat (401, Netz weg), macht das Feld ID-los,
+  statt auf den alten Wert zurückzuspringen. Sonst wird das Wort des Nutzers verworfen und
+  ihm gleichzeitig als Bestätigung angerechnet. Gilt für **jedes** Feld mit Neuabfrage
+  (`RELOOKUP_ON_TYPE` — Kategorie und Größe): bei der Kategorie gewinnt das getippte Wort
+  sogar die Anzeige, während die ID die der vorigen Kategorie bliebe.
+- **Gegenprobe bei Vinted** (Entscheidung C): vor dem Anlegen wird Vinteds eigene
+  Foto-Erkennung befragt; Widerspruch blockt — **außer** das Feld ist eine ausdrückliche
+  Wahl des Nutzers (`overriddenBy`), sonst wäre die eigene Antwort nicht durchsetzbar.
+- **Schreib-Schloss** (`write-lock.js`): nur ein schreibender Lauf gleichzeitig.
+- **Erst-Bestätigung** auch vor dem ersten echten Anlegen (`confirmedCreate`).
+- **Der Key verlässt den Tab nicht:** verschlüsselt in `storage.local`, entsperrt nur in
+  `storage.session`, benutzt nur im Studio.
 
 ---
 
@@ -830,9 +1062,14 @@ ist zwar in `.gitignore`, aber die Erweiterung wird **entpackt** geladen: Chrome
 Aufräumen: `rm -rf coverage`.
 
 **Coverage-Strategie:** Reine + Storage-Module via In-Memory-chrome-Mock
-(`tests/helpers/chrome-mock.js`) auf ~98–100 %. Nicht unit-getestet (per Browser
-end-to-end validiert): `relist.js` (Orchestrierung) und `image-utils.reencode`
-(`OffscreenCanvas`, nur im Browser).
+(`tests/helpers/chrome-mock.js`) auf ~98–100 %. Beide Pipelines laufen im Test gegen einen
+Fake-Port, sodass `relist.js` und `draft.js` ohne Browser prüfbar sind; `missingMembers()`
+hält Fake und Live-Adapter dabei auf derselben Schnittstelle **samt Stelligkeit**.
+
+Bewusst **nicht** unit-getestet: `popup/`, `studio/` und `content/` — dort wird nichts
+entschieden, was sich testen ließe (siehe §2). Ebenfalls nur end-to-end im Browser
+validiert: `image-utils.reencode` und `studio/canvas.js` (beide brauchen ein echtes
+Canvas).
 
 **Laden:** `chrome://extensions` → Entwicklermodus → „Entpackte Erweiterung laden" →
 Projektordner. Bei Permission-Banner (cookies/webRequest) bestätigen. Nach Code-Änderung
@@ -854,6 +1091,21 @@ injiziert; der SW injiziert sonst automatisch nach).
 - **Mobile-API** wird nicht unterstützt (leicht abweichend).
 - **Versionierung:** Bei jeder Code-Änderung wird die Minor-Version in `manifest.json` +
   `package.json` erhöht, damit nach dem Reload sichtbar ist, dass die neue Version läuft.
+  Beide Oberflächen zeigen sie an — nach einem „bitte neu laden" ist das die einzige
+  Auskunft darüber, ob es geschehen ist.
+- **Buchsprachen** (`lib/book.js`): Vinted gibt die `language_book`-IDs nirgends preis —
+  kein Katalogfeld, kein Attribut-Endpoint, im Formular für Comics nicht einmal ein
+  Sprachfeld. Jede ID in `BOOK_LANGUAGES` stammt aus einem von Hand eingestellten Inserat.
+  Was dort nicht steht, wird nicht geraten: das Sprachfeld blockt, bevor ein Foto hochgeht,
+  und bietet die belegten Sprachen zur Auswahl an. Eine neue eintragen = ein Inserat in
+  dieser Sprache von Hand anlegen, `GET /api/v2/item_upload/items/{id}` lesen, die ID in
+  `BOOK_LANGUAGES` ergänzen — Auswahlfeld und ID-Tabelle wachsen dann gemeinsam mit.
+- **Preisvorschlag:** Für ganze Kategoriefamilien liefert Vinted keine Vergleichsartikel;
+  dann gibt es keinen Vorschlag, und der Preis bleibt eine Eingabe. Alle drei IDs
+  (Kategorie, Größe, Zustand) müssen stehen, bevor überhaupt gefragt werden kann.
+- **Phasenliste und Pipeline** müssen zusammenpassen: verschiebt sich eine
+  `publishProgress`-Marke, gehört sie auch in `lib/steps.js`. `tests/steps.test.js` hält
+  das für `DRAFT_STEPS` fest.
 
 ---
 

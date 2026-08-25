@@ -16,6 +16,7 @@ import { getSettings, saveSettings, DEFAULT_DESCRIPTION_TEMPLATE, CONDITION_OPTI
 import { storeKey, unlockKey, hasStoredKey, readCachedKey, clearKey, describeKeyState } from '../lib/secret.js';
 import { parseUrl } from '../lib/item.js';
 import { PROGRESS_KEY } from '../lib/progress.js';
+import { STEP_MARKS } from '../lib/steps.js';
 import { LOG_KEY, clearLog } from '../lib/logger.js';
 import { getHistory, countWindows, clearHistory, HISTORY_KEY } from '../lib/history.js';
 import { resetConfirmedDelete } from '../lib/confirmation.js';
@@ -51,7 +52,8 @@ function showProgress(pct, step, steps) {
  *
  * Das Zeichen sagt die Lage auch dann, wenn jemand die Farben nicht unterscheidet; das ist
  * derselbe Aufbau wie im Toast auf der Vinted-Seite, damit man nicht zwei Darstellungen
- * lernen muss.
+ * lernen muss. Die Zeichen kommen aus `lib/steps.js` — „erledigt" sieht in beiden Fenstern
+ * gleich aus, oder es ist ein Fehler.
  */
 function renderSteps(steps) {
   const list = $('progressSteps');
@@ -60,7 +62,7 @@ function renderSteps(steps) {
     li.className = 'progress-phase is-' + s.state;
     const mark = document.createElement('span');
     mark.className = 'progress-mark';
-    mark.textContent = s.state === 'done' ? '✓' : (s.state === 'current' ? '▸' : '·');
+    mark.textContent = STEP_MARKS[s.state] ?? '';
     const text = document.createElement('span');
     text.textContent = s.label;
     li.append(mark, text);

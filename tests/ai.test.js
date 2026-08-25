@@ -235,6 +235,42 @@ test('parseAnalysis: a schema violation is discarded whole, never taken in part'
   assert.throws(() => parseAnalysis(broken({ brand_confidence: 'hoch' })), /brand_confidence/);
 });
 
+test('parseAnalysis: eine ISBN als ZAHL kostet nicht die ganze Analyse', () => {
+  // Die ISBN ist das eine Feld, dessen natürlicher Wert eine lange Ziffernfolge ist — und
+  // darauf antwortet ein Modell gern mit einer Zahl. Vorher fiel deswegen alles weg: Marke,
+  // Größe, Zustand, Fotoreihenfolge. Für ein T-Shirt wegen einer Angabe, die dort keine
+  // Rolle spielt.
+  const a = parseAnalysis(broken({ isbn: 9783161484100 }));
+  assert.equal(a.isbn, '9783161484100');
+  assert.equal(a.brand, 'Nike', 'der Rest der Analyse steht');
+});
+
+test('parseAnalysis: die ISBN wird zur Zeichenkette, nicht zur Vermutung', () => {
+  // Umgewandelt wird nur die FORM. Ob die Ziffern eine ISBN ergeben, entscheidet
+  // `book.js#normaliseIsbn` — dort, wo die Folge sichtbar ist.
+  assert.equal(parseAnalysis(broken({ isbn: 42 })).isbn, '42');
+  assert.equal(parseAnalysis(broken({ isbn: null })).isbn, null);
+  assert.throws(() => parseAnalysis(broken({ isbn: NaN })), /isbn/, 'keine Zahl ist keine Ziffernfolge');
+  assert.throws(() => parseAnalysis(broken({ isbn: ['978'] })), /isbn/);
+});
+
+test('parseAnalysis: auch Größe und Marke dürfen als Zahl kommen', () => {
+  // Dieselbe Lage wie bei der ISBN: „38" und „146" SIND Größen, „501" ist eine Marke. Ein
+  // eigenes `if` je Feld hätte man wieder erst nach dem nächsten Fehlschlag geschrieben.
+  assert.equal(parseAnalysis(broken({ size_label: 146 })).size_label, '146');
+  assert.equal(parseAnalysis(broken({ brand: 501 })).brand, '501');
+});
+
+test('parseAnalysis: in einem Prosafeld ist eine Zahl KEINE Schreibweise', () => {
+  // `condition_evidence` ist ein Halbsatz, `description_sentence` ein Satz. Eine Zahl darin
+  // ist ein Missverständnis, kein Formproblem — und dann gilt die Regel dieser Datei: lieber
+  // die ganze Antwort verwerfen als eine halb genommene. Genau deshalb ist `DIGIT_BEARING`
+  // eine benannte Liste und nicht „alles, was das Schema als Zeichenkette führt".
+  assert.throws(() => parseAnalysis(broken({ condition_evidence: 42 })), /condition_evidence/);
+  assert.throws(() => parseAnalysis(broken({ description_sentence: 42 })), /description_sentence/);
+  assert.throws(() => parseAnalysis(broken({ material: 42 })), /material/);
+});
+
 test('parseAnalysis: rejects an out-of-range confidence', () => {
   assert.throws(() => parseAnalysis(broken({ type_confidence: 1.4 })), /type_confidence/);
 });

@@ -122,6 +122,22 @@
   transition: width 0.3s ease;
 }
 
+/* Phasenliste: was erledigt ist, was läuft, was noch kommt. Die Struktur gehört hierher,
+   die Abstufung nach klar.css — sonst zerfiele die Liste zu einer Aufzählung mit Punkten,
+   sobald man das Theme-Blatt aus dem Manifest nimmt. */
+.vr-toast-steps { list-style: none; margin: 10px 0 0; padding: 0; }
+
+.vr-toast-phase {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 2px 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.vr-toast-mark { width: 9px; flex: none; text-align: center; font-size: 10px; }
+
 .vr-toast-result {
   margin-top: 0;
   font-size: 13px;

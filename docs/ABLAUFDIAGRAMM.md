@@ -15,6 +15,9 @@ flowchart LR
     subgraph Popup["Popup (popup.js)"]
         UI[URL-Eingabe · Buttons · Settings · Verlauf]
     end
+    subgraph Studio["Studio-Tab (studio.js)"]
+        PREP["Fotos → Zuschnitt → KI-Erkennung<br/>→ Felder bestätigen"]
+    end
     subgraph Content["Content-Script (content.js)"]
         BTN["Relist-Button + Toast<br/>(Wardrobe-Enhancer)"]
         PROXY["API-Proxy<br/>(fetch im Page-Origin)"]
@@ -22,27 +25,41 @@ flowchart LR
     subgraph SW["Service Worker (background)"]
         ROUTER[Message-Router]
         SNOOP[webRequest Token-Snooper]
-        PIPE["Pipeline (lib/relist.js)"]
+        PIPE["Relist-Pipeline (lib/relist.js)"]
+        DPIPE["Publish-Pipeline (lib/draft.js)"]
     end
     subgraph Vinted["Vinted-Server"]
         API["/api/v2/..."]
     end
+    subgraph Anthropic["api.anthropic.com"]
+        AI["Foto → erkannte Felder"]
+    end
 
     UI -- "relist/preflight · relist/run" --> ROUTER
     BTN -- "relist/preflight · relist/run" --> ROUTER
+    PREP -- "draft/gates · draft/publish" --> ROUTER
+    PREP -- "fetch (Key nur hier)" --> AI
     ROUTER --> PIPE
+    ROUTER --> DPIPE
     PIPE -- "api/call (Message)" --> PROXY
+    DPIPE -- "api/call (Message)" --> PROXY
     PROXY -- "fetch credentials:include" --> API
     API -. "X-CSRF-Token / X-Anon-Id" .-> SNOOP
     SNOOP -- "chrome.storage.local.liveTokens" --> PIPE
-    PIPE -- "chrome.storage.local.progress" --> UI
-    PIPE -- "chrome.storage.local.progress" --> BTN
+    PIPE -- "storage.local.progress {pct, step, steps}" --> UI
+    PIPE -- "storage.local.progress {pct, step, steps}" --> BTN
+    DPIPE -- "storage.local.progress {pct, step, steps}" --> PREP
 ```
 
 **Kernidee:** Der Service Worker orchestriert, **fetcht aber nie selbst** gegen die
 state-changing API. Jeder API-Call wird als `api/call`-Nachricht an das Content-Script
 geschickt und dort ausgeführt — nur so stimmt der `Origin` (`https://www.vinted.de`),
 den Vintends CSRF-Schutz verlangt.
+
+**Zweite Kernidee (ADR-0007):** Vom Auto-Listing überquert nur die **schreibende** Hälfte
+diese Naht. Zuschnitt, KI-Call und Feldbestätigung bleiben im Studio-Tab — der Worker
+bekommt einen Aufruf und gibt eine Antwort, statt minutenlang zu leben. Die Originalfotos
+und der entschlüsselte Anthropic-Key verlassen den Tab nie.
 
 ---
 
@@ -152,18 +169,22 @@ sequenceDiagram
         C->>U: Dialog „Original wird gelöscht?"
     end
     C->>SW: relist/preflight(url)
-    SW-->>C: { interest, counts }
-    alt zu viele Bumps
-        C->>U: Cooldown-Warnung
-    end
-    alt aktives Interesse
-        C->>U: Interest-Warnung
+    SW-->>C: { interest, counts, gates, steps }
+    loop für jedes Gate (gates.js)
+        C->>U: Warnung — erst Bestätigung, dann weiter
     end
     C->>SW: relist/run(url)
-    SW-->>C: progress (via storage.onChanged) → Toast
-    SW-->>C: Ergebnis { newId, newUrl | warning }
+    SW-->>C: progress { pct, step, steps } (storage.onChanged) → Toast
+    C->>U: Toast: Balken, laufende Meldung, Phasenliste (✓ ▸ ·)
+    SW-->>C: Ergebnis { newId, newUrl | warning } + message
     C->>U: Toast „Fertig" + Link / Card ausgrauen
 ```
+
+Die Warnungen formuliert das Content-Script nicht selbst: `preflight` liefert die
+geordneten `gates`, und dieselbe Liste bekommt das Popup (`lib/gates.js`) — sonst driften
+zwei Textfassungen auseinander. Die `steps` reisen aus demselben Grund mit: das
+Content-Script ist ein klassisches Skript und kann `lib/steps.js` nicht importieren
+(ADR-0006).
 
 ---
 
@@ -174,7 +195,14 @@ sequenceDiagram
 | `liveTokens`     | `{ [domain]: {csrf, anonId, ts} }` — gesnoopte Tokens     | webRequest-Snooper  |
 | `sessions`       | `{ [domain]: {csrf, anonId, vUdt, vUid, ts} }`            | auth.js             |
 | `settings`       | Nutzer-Einstellungen (siehe settings.js)                  | popup / settings.js |
-| `relistHistory`  | Array der letzten ≤100 Relists                            | history.js          |
-| `progress`       | `{ pct, step, ts }` — live Fortschritt                    | progress.js         |
+| `relistHistory`  | Array der letzten ≤100 Läufe                              | history.js          |
+| `progress`       | `{ pct, step, steps, ts }` — Fortschritt + Phasenliste    | progress.js, steps.js |
 | `log`            | Ring-Buffer der letzten 500 Log-Zeilen                    | logger.js           |
-| `confirmedDelete`| Flag: Erst-Bestätigung erledigt                           | popup / content.js  |
+| `confirmedDelete`| Flag: Erst-Bestätigung Löschen erledigt                   | confirmation.js     |
+| `confirmedCreate`| Flag: Erst-Bestätigung Anlegen erledigt                   | confirmation.js     |
+| `taxonomy`       | Kategorie-/Größen-Cache mit TTL                           | taxonomy.js         |
+| `priceMemory`    | gemerkte Preise je Kategorie                              | price-memory.js     |
+| `anthropicKey`   | verschlüsselter API-Key                                   | secret.js           |
+
+Dazu in `chrome.storage.**session**`: `anthropicKeyPlain` — der entsperrte Key, nur für
+die Dauer der Browser-Sitzung.

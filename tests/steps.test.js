@@ -1,6 +1,7 @@
 import { test } from 'node:test';
+import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
-import { RELIST_STEPS, DRAFT_STEPS, stepsAt, STEP_DONE, STEP_CURRENT, STEP_TODO } from '../lib/steps.js';
+import { RELIST_STEPS, DRAFT_STEPS, stepsAt, STEP_DONE, STEP_CURRENT, STEP_TODO, STEP_MARKS } from '../lib/steps.js';
 
 /** Kurzform: die Zustände als Zeichenkette, damit ein Vergleich lesbar bleibt. */
 const shape = (steps, pct) => stepsAt(steps, pct).map(s => s.state[0]).join('');
@@ -56,4 +57,28 @@ test('DRAFT_STEPS folgt den Marken, die draft.js wirklich meldet', () => {
   assert.equal(shape(DRAFT_STEPS, 15), 'dcttt');
   assert.equal(shape(DRAFT_STEPS, 80), 'dddct');
   assert.equal(shape(DRAFT_STEPS, 90), 'ddddc');
+});
+
+test('STEP_MARKS: das Content-Skript trägt dieselben Zeichen wie die Tabelle', () => {
+  // Es kann `lib/steps.js` nicht importieren (ADR-0006) und hält deshalb die einzige Kopie.
+  // Eine Kopie, die niemand prüft, driftet — also liest dieser Test sie und vergleicht.
+  //
+  // VERGLICHEN WIRD DIE TABELLE, nicht der Code drumherum: der Test zog die Zeichen einmal
+  // positionsweise aus einem Ternär, kannte damit dessen Syntax und wäre an einer
+  // umgestellten Bedingung zerbrochen — mit einer Fehlermeldung über den Leser statt über
+  // die Abweichung. Beide Seiten führen jetzt dieselbe Form, also ist der Vergleich einer.
+  const src = readFileSync(new URL('../content/content.js', import.meta.url), 'utf8');
+  const match = src.match(/const STEP_MARKS = (\{[^}]*\});/);
+  assert.ok(match, 'die Abschrift im Content-Skript wurde nicht gefunden — Test anpassen');
+
+  // eslint-disable-next-line no-eval -- ein Objektliteral aus der eigenen Quelle, kein Input
+  const kopie = eval(`(${match[1]})`);
+  assert.deepEqual(kopie, STEP_MARKS);
+  assert.deepEqual(Object.keys(kopie).sort(), [STEP_CURRENT, STEP_DONE, STEP_TODO].sort());
+});
+
+test('STEP_MARKS: jeder Zustand hat ein Zeichen, und keines ist leer', () => {
+  for (const state of [STEP_DONE, STEP_CURRENT, STEP_TODO]) {
+    assert.ok(STEP_MARKS[state], state);
+  }
 });

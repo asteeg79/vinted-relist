@@ -72,29 +72,10 @@
    Kopfband. */
 .vr-toast-fill { background: #09b1ba; }
 
-/* ---------- Phasenliste: was war, was kommt ---------- */
-.vr-toast-steps {
-  list-style: none;
-  margin: 10px 0 0;
-  padding: 8px 0 0;
-  border-top: 1px solid #eef1f2;
-}
-
-.vr-toast-phase {
-  display: flex;
-  align-items: baseline;
-  gap: 7px;
-  padding: 2px 0;
-  font-size: 11.5px;
-  line-height: 1.5;
-}
-
-.vr-toast-mark {
-  width: 9px;
-  flex: none;
-  text-align: center;
-  font-size: 10px;
-}
+/* ---------- Phasenliste: was war, was kommt ----------
+   Nur die Abstufung. Liste, Zeile und Zeichenspalte stehen in inject.css, damit die Liste
+   auch ohne dieses Blatt eine Liste bleibt. */
+.vr-toast-steps { border-top: 1px solid #eef1f2; padding-top: 8px; }
 
 /* Erledigtes tritt zurück, ohne zu verschwinden — man soll sehen, dass es da war. */
 .vr-toast-phase.is-done { color: #8d979b; }

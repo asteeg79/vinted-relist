@@ -384,7 +384,13 @@ async function applySuggestedCrops() {
       // beiden häufigsten Absagen — „füllt ohnehin das Bild" und „müsste zu stark
       // hochgerechnet werden" — kosteten damit je einen kompletten Durchlauf für nichts,
       // und seit der Prompt für JEDES Foto eine Artikelbox verlangt, für jedes Foto.
-      const verdict = modelBoxVerdict(photo.articleBox, photo.modelFrame, photo.modelFrame.w, photo.modelFrame.h);
+      //
+      // DIE MASSE DES ORIGINALS, nicht die des Rahmens: `modelBoxVerdict` klemmt gegen das
+      // Bild und prüft daran auch die Fläche und die Hochrechnung. Hier stand einmal
+      // `photo.modelFrame.w/h` — und das stimmt nur, solange die Modellkopie das ganze Foto
+      // ist. Genau diese Annahme verbietet `canvas.js` an der Stelle, die `modelFrame`
+      // liefert.
+      const verdict = modelBoxVerdict(photo.articleBox, photo.modelFrame, photo.sourceWidth, photo.sourceHeight);
       if (!verdict.box) {
         // 'full_frame' is the normal "nothing to trim here" and stays quiet as such; the
         // other reasons mean the model proposed something unusable, and a model that keeps
@@ -393,7 +399,12 @@ async function applySuggestedCrops() {
         continue;
       }
 
-      const redrawn = await prepare(photo.file, { modelBox: photo.articleBox, previousFrame: photo.modelFrame });
+      // DIE FERTIGE BOX, nicht die Zutaten dafür. `prepare` rechnete das Urteil sonst ein
+      // zweites Mal aus — zwei Rechnungen, die übereinstimmen MÜSSEN, samt einem Zweig hier,
+      // der den Fall abfing, dass sie es nicht tun. Wer entscheidet, entscheidet einmal:
+      // hier fällt das Urteil, dort wird gezeichnet.
+      const redrawn = await prepare(photo.file, { box: verdict.box, boxReason: verdict.reason });
+
       // NUR die Inseratskopie wird frei — die Modellkopie liefert der zweite Durchgang gar
       // nicht mehr, weil sie Byte für Byte dieselbe wäre. `Object.assign` lässt sie stehen.
       URL.revokeObjectURL(photo.url);
@@ -664,7 +675,14 @@ function renderFields(view) {
     label.textContent = field.label;
     li.appendChild(label);
 
-    li.appendChild(field.key === 'condition' ? conditionInput(field) : valueInput(field));
+    // Ein Feld mit fester Auswahl bekommt ein Auswahlfeld — welche Felder das sind, steht
+    // an ihnen (`options`) und nicht hier. Der Zustand behält sein eigenes: eine Änderung
+    // dort setzt zusätzlich die Bestätigung zurück und holt die Preisspanne neu.
+    li.appendChild(
+      field.key === 'condition' ? conditionInput(field)
+        : field.options.length ? optionsInput(field)
+          : valueInput(field)
+    );
 
     const chip = document.createElement('span');
     chip.className = 'field-state ' + field.state;
@@ -714,6 +732,12 @@ function renderFields(view) {
  * `draft-view.js` führt diese Tabellen ohnehin. Hier standen sie ein zweites Mal, und die
  * Beschriftung war dabei falsch: bei Medien heißt das Feld „Titel", die Statuszeile sagte
  * „Schlage die Kategorie nach…".
+ *
+ * DIE MELDUNGEN SETZEN DIE BESCHRIFTUNG IN ANFÜHRUNGSZEICHEN, statt sie in einen Satz
+ * einzubauen. Der erste Anlauf tauschte nur die Tabelle gegen `field.label` und behielt den
+ * Satzbau — heraus kam „Schlage die Titel nach…". Ein eingebauter Artikel ist dieselbe
+ * Annahme wie eine eingebaute Tabelle, nur kleiner: er gilt für ein Wort, das von woanders
+ * kommt und sich ändern darf.
  */
 async function retypeField(field) {
   const key = field.key;
@@ -721,7 +745,12 @@ async function retypeField(field) {
   const label = field.label;
 
   delete state.picks[key]; // das getippte Wort ersetzt eine frühere Wahl
-  setAnalyse(`Schlage die ${label} nach…`, 'working');
+  // OHNE ARTIKEL, und das ist kein Stilwunsch. Die Beschriftung kommt aus `draft-view.js`
+  // und ist je nach Warengruppe eine andere: bei Medien heißt das Feld „Titel", nicht
+  // „Kategorie". „Schlage die Titel nach…" war die Folge eines eingebauten „die" — dieselbe
+  // Sorte Fehler wie die hartkodierte Tabelle davor, nur eine Ebene kleiner. In
+  // Anführungszeichen gesetzt passt jede Beschriftung.
+  setAnalyse(`„${label}" wird nachgeschlagen…`, 'working');
 
   let failed = await runLookup();
   const resolution = failed ? null : state.resolved[resolvedKey];
@@ -741,7 +770,9 @@ async function retypeField(field) {
   // wäre hier eine Absage an einen Schritt, der gerade funktioniert hat.
   const options = resolution?.candidates?.length ?? 0;
   setAnalyse(
-    options ? `${label}: ${options} zur Auswahl — unten weitergehen` : `Keine passende ${label} gefunden.`,
+    options
+      ? `${label}: ${options} zur Auswahl — unten weitergehen`
+      : `Nichts gefunden für „${label}".`,
     options ? 'ok' : 'error'
   );
 }
@@ -777,6 +808,71 @@ function valueInput(field) {
 }
 
 /**
+ * Ein Feld, dessen Antworten feststehen — die Sprache eines Buchs ist die erste.
+ *
+ * Die Liste kommt vom Feld, nicht von hier: `draft-view.js` führt sie ohnehin, und eine
+ * zweite Fassung im Studio wäre genau die Kopie, die beim nächsten Eintrag stehenbliebe.
+ *
+ * Steht der aktuelle Wert NICHT in der Liste, wird er nicht heimlich zu einer gültigen
+ * Antwort gemacht. Das Auswahlfeld steht dann leer und sagt im Platzhalter, was da war —
+ * die Begründung steht als Notiz am Feld.
+ */
+function optionsInput(field) {
+  const known = field.options.some(o => o.value === field.value);
+  return buildSelect({
+    className: 'field-value',
+    ariaLabel: field.label,
+    fieldKey: field.key,
+    placeholder: field.value && !known ? `„${field.value}" — bitte wählen` : `${field.label} wählen`,
+    options: field.options,
+    value: field.value,
+    onChange: e => {
+      if (e.currentTarget.value) state.overrides[field.key] = e.currentTarget.value;
+      else delete state.overrides[field.key];
+      render();
+    }
+  });
+}
+
+/**
+ * Das Gerüst eines Auswahlfeldes — dreimal gebraucht, einmal geschrieben.
+ *
+ * Element anlegen, Beschriftung setzen, einen leeren Eintrag als Platzhalter voranstellen,
+ * die Liste einhängen, die Vorauswahl setzen, auf `change` hören: das war dreimal dasselbe,
+ * mit je einer Abweichung, die im Rauschen unterging. Was wirklich verschieden ist, steht
+ * jetzt in den Aufrufen — die Zustandsliste bringt Erklärungen mit, die Kandidatenliste
+ * kennt keine Vorauswahl, das Sprachfeld schreibt seine Antwort in die Overrides.
+ *
+ * DIE VORAUSWAHL GILT NUR, WENN SIE IN DER LISTE STEHT. Ein Wert, den es dort nicht gibt,
+ * würde vom Browser stillschweigend verworfen und das Feld sähe aus wie „nichts gewählt" —
+ * hier ist es das dann auch, und der Platzhalter sagt, was stattdessen da war.
+ */
+function buildSelect({ className, ariaLabel, fieldKey, placeholder, options, value = '', disabled = false, onChange }) {
+  const select = document.createElement('select');
+  select.className = className;
+  select.setAttribute('aria-label', ariaLabel);
+  if (fieldKey) select.dataset.field = fieldKey;
+
+  const empty = document.createElement('option');
+  empty.value = '';
+  empty.textContent = placeholder;
+  select.appendChild(empty);
+
+  for (const option of options) {
+    const el = document.createElement('option');
+    el.value = option.value;
+    el.textContent = option.label;
+    if (option.title) el.title = option.title;
+    select.appendChild(el);
+  }
+
+  select.disabled = disabled;
+  select.value = options.some(o => o.value === value) ? value : '';
+  select.addEventListener('change', onChange);
+  return select;
+}
+
+/**
  * The condition select — filled from VINTED's list once the lookup has run, because those
  * carry the real `status_id`s. Before that there is nothing honest to offer.
  *
@@ -784,37 +880,27 @@ function valueInput(field) {
  * their yardstick and not by the seller's hope.
  */
 function conditionInput(field) {
-  const select = document.createElement('select');
-  select.className = 'field-value';
-  select.setAttribute('aria-label', field.label);
-  select.dataset.field = field.key;
-
-  const empty = document.createElement('option');
-  empty.value = '';
-  empty.textContent = state.conditions.length ? 'Zustand wählen' : 'kommt mit dem Nachschlagen';
-  select.appendChild(empty);
-
-  for (const { id, title, explanation } of state.conditions) {
-    const option = document.createElement('option');
-    option.value = String(id);
-    option.textContent = title;
-    if (explanation) option.title = explanation;
-    select.appendChild(option);
-  }
-  select.disabled = state.conditions.length === 0;
-  select.value = field.id != null ? String(field.id) : '';
-  select.title = state.conditions.find(c => String(c.id) === select.value)?.explanation || '';
-
-  select.addEventListener('change', async () => {
-    state.condition = select.value ? Number(select.value) : null;
-    state.conditionMeta = { source: 'user', value: null, evidence: null };
-    // A changed condition is a new answer — it has to be confirmed again. And the price
-    // range moves with it, so it is refetched (Entscheidung W3).
-    delete state.confirmations.condition;
-    const failed = await runLookup();
-    if (failed) setAnalyse(failed, 'error');
-    render();
+  const select = buildSelect({
+    className: 'field-value',
+    ariaLabel: field.label,
+    fieldKey: field.key,
+    placeholder: state.conditions.length ? 'Zustand wählen' : 'kommt mit dem Nachschlagen',
+    options: state.conditions.map(c => ({ value: String(c.id), label: c.title, title: c.explanation })),
+    value: field.id != null ? String(field.id) : '',
+    disabled: state.conditions.length === 0,
+    onChange: async e => {
+      state.condition = e.currentTarget.value ? Number(e.currentTarget.value) : null;
+      state.conditionMeta = { source: 'user', value: null, evidence: null };
+      // A changed condition is a new answer — it has to be confirmed again. And the price
+      // range moves with it, so it is refetched (Entscheidung W3).
+      delete state.confirmations.condition;
+      const failed = await runLookup();
+      if (failed) setAnalyse(failed, 'error');
+      render();
+    }
   });
+  // Vinteds Maßstab auch für die aktuelle Wahl, nicht nur beim Aufklappen.
+  select.title = state.conditions.find(c => String(c.id) === select.value)?.explanation || '';
   return select;
 }
 
@@ -855,52 +941,47 @@ function priceHint(view) {
  * so nothing downstream may keep the answer from before.
  */
 function candidateSelect(field) {
-  const select = document.createElement('select');
-  select.className = 'field-candidates';
-  select.setAttribute('aria-label', field.label + ' auswählen');
-
-  // Ein Schritt (`path`, keine id) ist kein Ziel, sondern die nächste Eingabe — siehe
-  // `browseCatalogs`. Welche Sorte Liste das ist, entscheidet `draft-view.js`.
-  const empty = document.createElement('option');
-  empty.value = '';
-  empty.textContent = field.candidateKind === 'steps'
-    ? `${field.candidates.length} Bereiche — weiter eingrenzen`
-    : `${field.candidates.length} Treffer — auswählen`;
-  select.appendChild(empty);
-
-  for (const candidate of field.candidates) {
-    const option = document.createElement('option');
+  return buildSelect({
+    className: 'field-candidates',
+    ariaLabel: field.label + ' auswählen',
+    // Ein Schritt (`path`, keine id) ist kein Ziel, sondern die nächste Eingabe — siehe
+    // `browseCatalogs`. Welche Sorte Liste das ist, entscheidet `draft-view.js`.
+    placeholder: field.candidateKind === 'steps'
+      ? `${field.candidates.length} Bereiche — weiter eingrenzen`
+      : `${field.candidates.length} Treffer — auswählen`,
     // Ein Schritt trägt seinen Pfad, ein Treffer seine id. Beides landet unten in
     // verschiedenen Zweigen, und die Unterscheidung ist genau die zwischen „weiter" und
     // „das ist es".
-    option.value = candidate.id != null ? String(candidate.id) : (candidate.path ?? candidate.label);
-    option.textContent = candidate.label;
-    select.appendChild(option);
-  }
-
-  select.addEventListener('change', async () => {
-    if (!select.value) return;
-    const id = Number(select.value);
-    if (Number.isFinite(id) && field.candidates.some(c => String(c.id) === select.value)) {
-      // The pick still passes validatePick inside resolve.js — this only proposes it.
-      state.picks[field.key] = id;
-      // UND DAS GETIPPTE WORT IST DAMIT ERLEDIGT. Ohne diese Zeile blieb es stehen und
-      // gewann im Titel: `values` liest `overrides` VOR der Auflösung. Live zu sehen an
-      // einem eingestellten Inserat — Titel „Under Armour Kinder Jungs Hose 146 Schwarz",
-      // während es unter „Herren > Kleidung > Hosen > Jogging-Hosen" mit Größe „M" lag.
-      // Der Titel behauptete etwas anderes als die Angaben darunter, und beides stand
-      // öffentlich. Wer aus der Liste wählt, hat seinen Suchbegriff ersetzt, nicht ergänzt.
-      delete state.overrides[field.key];
-      setAnalyse(`${field.label} wird nachgeschlagen…`, 'working');
-      const failed = await runLookup();
-      const chosen = field.candidates.find(c => c.id === id)?.label;
-      setAnalyse(failed || `${field.label}: ${chosen ?? 'übernommen'}`, failed ? 'error' : 'ok');
-    } else {
-      // Der gewählte Pfad wird zum getippten Wort — dieselbe Filterung, eine Ebene tiefer.
-      state.overrides[field.key] = select.value;
-      if (field.relookupOnType) await retypeField(field);
+    options: field.candidates.map(c => ({
+      value: c.id != null ? String(c.id) : (c.path ?? c.label),
+      label: c.label
+    })),
+    // KEINE Vorauswahl: die Liste steht da, weil noch nichts entschieden ist.
+    onChange: async e => {
+      const picked = e.currentTarget.value;
+      if (!picked) return;
+      const id = Number(picked);
+      if (Number.isFinite(id) && field.candidates.some(c => String(c.id) === picked)) {
+        // The pick still passes validatePick inside resolve.js — this only proposes it.
+        state.picks[field.key] = id;
+        // UND DAS GETIPPTE WORT IST DAMIT ERLEDIGT. Ohne diese Zeile blieb es stehen und
+        // gewann im Titel: `values` liest `overrides` VOR der Auflösung. Live zu sehen an
+        // einem eingestellten Inserat — Titel „Under Armour Kinder Jungs Hose 146 Schwarz",
+        // während es unter „Herren > Kleidung > Hosen > Jogging-Hosen" mit Größe „M" lag.
+        // Der Titel behauptete etwas anderes als die Angaben darunter, und beides stand
+        // öffentlich. Wer aus der Liste wählt, hat seinen Suchbegriff ersetzt, nicht ergänzt.
+        delete state.overrides[field.key];
+        setAnalyse(`„${field.label}" wird nachgeschlagen…`, 'working');
+        const failed = await runLookup();
+        const chosen = field.candidates.find(c => c.id === id)?.label;
+        setAnalyse(failed || `${field.label}: ${chosen ?? 'übernommen'}`, failed ? 'error' : 'ok');
+      } else {
+        // Der gewählte Pfad wird zum getippten Wort — dieselbe Filterung, eine Ebene tiefer.
+        state.overrides[field.key] = picked;
+        if (field.relookupOnType) await retypeField(field);
+      }
+      render();
     }
-    render();
   });
   return select;
 }
