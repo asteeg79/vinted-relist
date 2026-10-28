@@ -1,0 +1,27 @@
+# Sicherheits-Inventar für den Security-Agenten (Phase 0). Grundlage für den
+# täglichen Abgleich neuer Advisories: Was läuft wo, in welcher Version, wer patcht.
+# Bei Änderungen an Runtime, Hosting oder Deploy-Weg mitpflegen.
+projekt: vinted-relist
+repo: asteeg79/vinted-relist (öffentlich)
+stand: 2026-10-28
+
+# PHP2Shell (CVE-2026-109618, CVE-2026-109619): nicht betroffen. Geprüft am
+# 2026-10-28 (main und auto-listing): kein composer.json, keine .php-Datei,
+# kein Dockerfile; keine Komponente läuft auf PHP.
+php: keins
+
+komponenten:
+  - name: chrome-extension
+    pfad: ./ (manifest.json, Manifest V3)
+    runtime: { sprache: javascript, version: Chrome (Browser des Nutzers) }
+    abhaengigkeiten: keine # kein Build, keine npm-Pakete
+    hosting: { art: lokal als entpackte Erweiterung, live_url: keine }
+    deploy: von Hand (chrome://extensions → Neu laden)
+    runtime_patcht: Chrome-Autoupdate
+    verifikation: Versionsnummer in chrome://extensions gegen manifest.json
+
+# Beobachtungen für Phase 1 (nicht in Phase 0 behoben):
+# - Keine Abhängigkeiten, also nichts für Dependabot; Lücken entstehen nur im
+#   eigenen Code. Rechte laut manifest.json: cookies, webRequest, scripting,
+#   tabs auf allen Vinted-Domains. Neue Rechte im Review begründen lassen.
+# - Keine CI im Repo; npm run check läuft nur lokal.
