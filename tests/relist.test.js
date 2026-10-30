@@ -223,7 +223,22 @@ test('verification returns zero photos: partial result, original NOT deleted', a
   assert.equal(res.partial, true);
   assert.equal(res.newId, NEW_ITEM_ID);
   assert.match(res.warning, /Original NICHT gelöscht/);
+  assert.equal(port.countOf('fetchItem'), 7, 'source fetch + six verify attempts');
   assert.equal(port.countOf('deleteItem'), 0);
+});
+
+test('verification sees zero photos at first, then the photos arrive: the delete proceeds', async () => {
+  let verifyCalls = 0;
+  const port = makeFakePort({
+    fetchItem: (domain, auth, itemId) => {
+      if (String(itemId) === '111') return structuredClone(SOURCE_ITEM);
+      return { id: NEW_ITEM_ID, photos: ++verifyCalls < 3 ? [] : [{ id: 1000 }] };
+    }
+  });
+  const res = await relist(URL, port);
+  assert.equal(res.partial, undefined);
+  assert.equal(verifyCalls, 3);
+  assert.deepEqual(port.deleted, ['111']);
 });
 
 test('verification never succeeds: partial result after every attempt, original NOT deleted', async () => {
@@ -236,8 +251,9 @@ test('verification never succeeds: partial result after every attempt, original 
   const res = await relist(URL, port);
   assert.equal(res.partial, true);
   assert.match(res.warning, /konnte aber nicht verifiziert werden/);
-  assert.equal(port.countOf('fetchItem'), 5, 'source fetch + four verify attempts');
-  assert.deepEqual(port.sleeps.filter(ms => [1500, 2500, 4000, 5500].includes(ms)), [1500, 2500, 4000, 5500]);
+  assert.equal(port.countOf('fetchItem'), 7, 'source fetch + six verify attempts');
+  const verifyDelays = [1500, 2500, 4000, 5500, 8000, 12000];
+  assert.deepEqual(port.sleeps.filter(ms => verifyDelays.includes(ms)), verifyDelays);
   assert.equal(port.countOf('deleteItem'), 0);
 });
 

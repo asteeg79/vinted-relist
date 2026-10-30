@@ -91,6 +91,7 @@ Ereignisse, nach denen sich das Suchen lohnt:
 | `studio_recrop` / `_skipped` / `_failed` | der zweite Zuschnitt-Durchgang, samt Box und Grund |
 | `book_language` | welche Sprache gewählt wurde und woher sie kommt |
 | `create_rejected_probe`, `fetchItem_shape` | Vinteds echte Feldformen bei einem 422 (ADR-0004) |
+| `verify_retry` / `verify_failed` / `verify_mismatch` | warum der Klon nicht bestätigt wurde: HTTP-Status oder `photos: 0` je Versuch |
 
 ## 4. Einzelne Module aus der Konsole aufrufen
 

@@ -115,7 +115,7 @@ relist/run(url)
    │
    ├─ Test-Modus?  ── ja ──► Original behalten, History(testMode) ─► Erfolg
    │
-   ├─ [88%]  verifyAfterCreate?  ── ja ──► re-fetch new item (Backoff 1.5/2.5/4/5.5s)
+   ├─ [88%]  verifyAfterCreate?  ── ja ──► re-fetch new item (Backoff 1.5/2.5/4/5.5/8/12s)
    │              └─ nicht verifizierbar / 0 Fotos ────► partial (Original bleibt)
    │
    ├─ [92%]  Ownership-Check (vUid == seller_id?)
